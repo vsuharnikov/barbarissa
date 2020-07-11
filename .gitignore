@@ -1,0 +1,9 @@
+.DS_Store
+.idea
+
+target
+*.log
+*.deb
+*local.conf
+*.tgz
+*.csv

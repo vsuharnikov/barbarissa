@@ -8,7 +8,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRou
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceRepo, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.{AbsenceJiraRepo, EmployeeJiraRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
@@ -124,7 +124,7 @@ object BarbarissaMain extends App {
         )
       )
 
-      val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes().rhoRoutes.toRoutes(middleware)).orNotFound
+      val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(middleware)).orNotFound
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
       BlazeServerBuilder[AppTask](rts.platform.executor.asEC)

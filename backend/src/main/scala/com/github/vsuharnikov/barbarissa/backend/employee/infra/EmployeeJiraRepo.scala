@@ -4,7 +4,7 @@ import cats.syntax.apply._
 import com.github.vsuharnikov.barbarissa.backend.employee.EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Sex, error}
 import io.circe.syntax._
 import org.http4s.Method._
 import org.http4s._
@@ -28,7 +28,11 @@ object EmployeeJiraRepo {
           .withEntity(
             JiraExtendedUserData(
               localizedName = draft.localizedName,
-              position = draft.position
+              position = draft.position,
+              sex = draft.sex.map {
+                case Sex.Male => "male"
+                case Sex.Female => "female"
+              }
             ).asJson
           )
 
@@ -80,7 +84,11 @@ object EmployeeJiraRepo {
     name = basic.displayName,
     localizedName = extended.localizedName,
     email = basic.emailAddress,
-    position = extended.position
+    position = extended.position,
+    sex = extended.sex.map {
+      case "male"   => Sex.Male
+      case "female" => Sex.Female
+    }
   )
 }
 

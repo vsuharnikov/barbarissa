@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend
 
-import com.github.vsuharnikov.cv.backend.test.ZIODiffMatcher
+import com.github.vsuharnikov.barbarissa.backend.test.ZIODiffMatcher
 import zio.Cause
 import zio.internal.Platform
 import zio.test.DefaultRunnableSpec

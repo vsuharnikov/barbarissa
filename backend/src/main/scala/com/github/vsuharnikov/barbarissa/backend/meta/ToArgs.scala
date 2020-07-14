@@ -13,6 +13,9 @@ trait ToArgs[T] {
 object ToArgs {
   type Typeclass[T] = ToArgs[T]
 
+  def apply[T](implicit ev: ToArgs[T]): ToArgs[T]     = ev
+  def toArgs[T: ToArgs](x: T): List[(String, String)] = apply[T].toArgs(x)
+
   def empty[T]: ToArgs[T] = (_: T) => List.empty
 
   implicit val string: ToArgs[String]       = empty

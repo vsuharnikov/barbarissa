@@ -1,22 +1,28 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app
 
 import java.io.File
+import java.time.LocalDate
+import java.time.format.{DateTimeFormatter, TextStyle}
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceClaimRequest, AbsenceRepo, Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{ReportService, error => domainError}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
 import zio.RIO
 import zio.interop.catz._
 
-class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportService] extends JsonSupport[RIO[R, *]] {
+class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportService](inflection: Inflection) extends JsonSupport[RIO[R, *]] {
   type HttpIO[A] = RIO[R, A]
+
+  private val locale        = Locale.forLanguageTag("ru")
+  private val dateFormatter = DateTimeFormatter.ofPattern("dd LLL YYYY", locale)
 
   private val swaggerSyntax = new SwaggerSupport[HttpIO] {}
   import swaggerSyntax._
@@ -94,7 +100,7 @@ class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportServic
 
     "Generates a claim for employee's absence" **
       "absence" @@
-        POST / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") / "report" |>> {
+        POST / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") / "claim" |>> {
       (employeeId: String, absenceId: String) =>
         val eid          = EmployeeId(employeeId)
         val aid          = AbsenceId(absenceId)
@@ -103,16 +109,11 @@ class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportServic
           employee <- EmployeeRepo.get(eid)
           absence  <- AbsenceRepo.get(eid, aid)
           report <- {
-            val data = AbsenceClaimRequest(
-              singularGenitivePosition = employee.position.getOrElse("???"),
-              singularGenitiveFullName = employee.localizedName.getOrElse("???"),
-              from = absence.from,
-              daysQuantity = absence.daysQuantity,
-              reportDate = absence.from.minus(1, ChronoUnit.MONTHS)
-            )
-            ReportService.generate(templateFile, implicitly[ToArgs[AbsenceClaimRequest]].toArgs(data).toMap)
+            val data = absenceClaimRequestFrom(employee, absence)
+            ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
           }
         } yield report
+
         r.fold(
           {
             case domainError.RepoRecordNotFound => NotFound("")
@@ -144,4 +145,15 @@ class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportServic
     localizedName = api.localizedName.some,
     position = api.position.some
   )
+
+  private def absenceClaimRequestFrom(e: Employee, a: Absence): AbsenceClaimRequest = AbsenceClaimRequest(
+    sinGenPosition = inflection.dativeAppointment(e.position.getOrElse("???").toLowerCase(locale)), // TODO
+    sinGenFullName = inflection.dativeName(e.localizedName.getOrElse("???"), e.sex),
+    sinGenFromDate = toSinGenDateStr(a.from),
+    daysQuantity = a.daysQuantity,
+    reportDate = toDateStr(a.from.minus(1, ChronoUnit.MONTHS))
+  )
+
+  private def toSinGenDateStr(x: LocalDate): String = s"${x.getDayOfMonth} ${x.getMonth.getDisplayName(TextStyle.FULL, locale)} ${x.getYear}"
+  private def toDateStr(x: LocalDate): String       = dateFormatter.format(x)
 }

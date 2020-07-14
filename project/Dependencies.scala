@@ -62,6 +62,10 @@ object Dependencies {
     "io.circe" %% "circe-generic-extras"
   ).map(_ % versionOf.circe)
 
+  val language = Seq(
+    "padeg" % "lib" % "3.3.0.24" from "https://dl.bintray.com/jbaruch/jbaruch-maven/padeg/lib/padeg/3.3.0.24/padeg-3.3.0.24.jar"
+  )
+
   val http = Seq(
     "org.http4s" %% "http4s-blaze-server",
     "org.http4s" %% "http4s-blaze-client",

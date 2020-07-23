@@ -30,7 +30,7 @@ object EmployeeJiraRepo {
               localizedName = draft.localizedName,
               position = draft.position,
               sex = draft.sex.map {
-                case Sex.Male => "male"
+                case Sex.Male   => "male"
                 case Sex.Female => "female"
               }
             ).asJson
@@ -56,7 +56,8 @@ object EmployeeJiraRepo {
 
       private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): ZIO[Any, error.RepoError, T] =
         client
-          .fetch(req) {
+          .run(req)
+          .use {
             case Status.Successful(resp) => f(resp)
             case Status.ClientError(resp) =>
               Task.fail(ForwardError {

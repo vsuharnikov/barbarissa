@@ -7,8 +7,8 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.employee._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
@@ -18,7 +18,8 @@ import org.http4s.rho.swagger.SwaggerSupport
 import zio.RIO
 import zio.interop.catz._
 
-class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportService](inflection: Inflection) extends JsonSupport[RIO[R, *]] {
+class EmployeeHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with ReportService with AbsenceAppointmentService](inflection: Inflection)
+    extends JsonSupport[RIO[R, *]] {
   type HttpIO[A] = RIO[R, A]
 
   private val locale        = Locale.forLanguageTag("ru")

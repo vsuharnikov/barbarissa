@@ -2,11 +2,12 @@ package com.github.vsuharnikov.barbarissa.backend
 
 import java.io.{PrintWriter, StringWriter}
 import java.security.Security
+import java.time.ZoneId
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceRepo, EmployeeRepo}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.{AbsenceJiraRepo, EmployeeJiraRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointmentService, AbsenceRepo, EmployeeRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.{AbsenceJiraRepo, EmployeeJiraRepo, MsExchangeAbsenceAppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
@@ -21,7 +22,7 @@ import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import zio.clock.Clock
 import zio.config._
-import zio.config.magnolia.DeriveConfigDescriptor.descriptor
+import zio.config.magnolia.DeriveConfigDescriptor.{Descriptor, descriptor}
 import zio.config.syntax._
 import zio.config.typesafe.TypesafeConfigSource
 import zio.console.putStrLn
@@ -36,7 +37,7 @@ import scala.reflect.runtime.universe._
 object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
   case class BarbarissaConfig(backend: BackendConfig)
-  case class BackendConfig(httpApi: HttpApiConfig, jira: EmployeeJiraRepo.Config)
+  case class BackendConfig(httpApi: HttpApiConfig, jira: EmployeeJiraRepo.Config, msExchange: MsExchangeAbsenceAppointmentService.Config)
   case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
@@ -46,8 +47,15 @@ object BarbarissaMain extends App {
   Security.setProperty("networkaddress.cache.ttl", "0")
   Security.setProperty("networkaddress.cache.negative.ttl", "0")
 
-  private type AppEnvironment = Clock with Has[HttpApiConfig] with Logging with EmployeeRepo with AbsenceRepo with ReportService
-  private type AppTask[A]     = RIO[AppEnvironment, A]
+  private type AppEnvironment = Clock
+    with Has[HttpApiConfig]
+    with Logging
+    with EmployeeRepo
+    with AbsenceRepo
+    with ReportService
+    with AbsenceAppointmentService
+
+  private type AppTask[A] = RIO[AppEnvironment, A]
 
   override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
     val program = makeHttpClient.flatMap(makeProgram)
@@ -84,8 +92,10 @@ object BarbarissaMain extends App {
 
     val absenceJiraRepositoryLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> AbsenceJiraRepo.live
 
+    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) >>> MsExchangeAbsenceAppointmentService.live
+
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
-      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ DocxReportService.live
+      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ DocxReportService.live
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -153,4 +163,6 @@ object BarbarissaMain extends App {
 
   private def mkSwaggerModel[T](implicit tt: TypeTag[T]) =
     TypeBuilder.collectModels(tt.tpe, Set.empty, org.http4s.rho.swagger.DefaultSwaggerFormats, typeOf[AppTask[_]])
+
+  implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap[ZoneId](ZoneId.of, x => x.getId)
 }

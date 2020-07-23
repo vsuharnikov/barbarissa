@@ -71,7 +71,8 @@ object AbsenceJiraRepo {
 
       private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): ZIO[Any, error.RepoError, T] =
         client
-          .fetch(req) {
+          .run(req)
+          .use {
             case Status.Successful(resp) =>
               println(resp)
               f(resp)

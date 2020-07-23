@@ -37,7 +37,7 @@ import scala.reflect.runtime.universe._
 object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
   case class BarbarissaConfig(backend: BackendConfig)
-  case class BackendConfig(httpApi: HttpApiConfig, jira: EmployeeJiraRepo.Config, msExchange: MsExchangeAbsenceAppointmentService.Config)
+  case class BackendConfig(httpApi: HttpApiConfig, jira: EmployeeJiraRepo.Config, msExchange: MsExchangeAbsenceAppointmentService.Config, routes: EmployeeHttpApiRoutes.Config)
   case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
@@ -49,6 +49,7 @@ object BarbarissaMain extends App {
 
   private type AppEnvironment = Clock
     with Has[HttpApiConfig]
+    with Has[EmployeeHttpApiRoutes.Config]
     with Logging
     with EmployeeRepo
     with AbsenceRepo
@@ -95,7 +96,7 @@ object BarbarissaMain extends App {
     val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) >>> MsExchangeAbsenceAppointmentService.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
-      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ DocxReportService.live
+      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ DocxReportService.live
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -131,6 +132,7 @@ object BarbarissaMain extends App {
         tags = List(
           Tag(name = "employee"),
           Tag(name = "absence"),
+          Tag(name = "appointment"),
         )
       )
 

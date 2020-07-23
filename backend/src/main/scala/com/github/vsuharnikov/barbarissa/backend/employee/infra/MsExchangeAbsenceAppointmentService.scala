@@ -5,7 +5,7 @@ import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
-import microsoft.exchange.webservices.data.core.enumeration.misc.ExchangeVersion
+import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
@@ -38,7 +38,11 @@ object MsExchangeAbsenceAppointmentService {
     for {
       service <- ZIO
         .effect {
-          val service     = new ExchangeService(ExchangeVersion.Exchange2010_SP2)
+          val service = new ExchangeService(ExchangeVersion.Exchange2010_SP2)
+          service.setTraceEnabled(true)
+          service.setTraceFlags(java.util.EnumSet.allOf(classOf[TraceFlags]))
+          service.setTraceListener((traceType: String, traceMessage: String) => println(s"==> type: $traceType, traceMessage: $traceMessage"))
+
           val credentials = new WebCredentials(config.credentials.username, config.credentials.password)
           service.setCredentials(credentials)
           service.autodiscoverUrl(config.credentials.username, new RedirectionUrlCallback)
@@ -49,9 +53,13 @@ object MsExchangeAbsenceAppointmentService {
       new AbsenceAppointmentService.Service {
         private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
         private val hasPropertySet     = new PropertySet(jiraTaskKeyPropDef)
+        private val getPropertySet     = new PropertySet(BasePropertySet.FirstClassProperties, jiraTaskKeyPropDef)
 
         override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
           has(toView(filter, config.searchPageSize), filter.serviceMark)
+
+        override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
+          get(toView(filter, config.searchPageSize), filter.serviceMark).map(_.map(toAbsenceAppointment))
 
         override def add(appointment: AbsenceAppointment): Task[Unit] =
           Task(toAppointment(appointment).save(calendarFolder.getId))
@@ -74,6 +82,28 @@ object MsExchangeAbsenceAppointmentService {
               property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
             }
           }
+        }
+
+        private def get(view: ItemView, jiraTaskValue: String): Task[Option[Appointment]] =
+          for {
+            items          <- Task.effect(calendarFolder.findItems(view))
+            appointmentNow <- Task.effect(getIn(items, jiraTaskValue))
+            appointment <- if (appointmentNow.isDefined || !items.isMoreAvailable) Task(appointmentNow)
+            else {
+              view.setOffset(items.getNextPageOffset)
+              get(view, jiraTaskValue)
+            }
+          } yield appointment
+
+        private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] = {
+          service.loadPropertiesForItems(items, getPropertySet)
+          items.asScala
+            .find { item =>
+              item.getExtendedProperties.asScala.exists { property =>
+                property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+              }
+            }
+            .collect { case appointment: Appointment => appointment }
         }
 
         private def toAppointment(appointment: AbsenceAppointment): Appointment = {
@@ -99,6 +129,18 @@ object MsExchangeAbsenceAppointmentService {
           r
         }
 
+        private def toAbsenceAppointment(x: Appointment): AbsenceAppointment = AbsenceAppointment(
+          subject = x.getSubject,
+          description = x.getBody.toString,
+          startDate = toLocalDate(x.getStart),
+          endDate = toLocalDate(x.getEnd),
+          serviceMark = x.getExtendedProperties.asScala
+            .collectFirst {
+              case x if x.getPropertyDefinition == jiraTaskKeyPropDef => x.getValue.toString
+            }
+            .getOrElse("") // Impossible
+        )
+
         private def toView(filter: AbsenceAppointmentService.SearchFilter, searchPageSize: Int): ItemView =
           MsExchangeAbsenceAppointmentService.toView(filter, searchPageSize, config.zoneId)
 
@@ -115,6 +157,8 @@ object MsExchangeAbsenceAppointmentService {
   }
 
   private def toDate(x: LocalDate, zoneId: ZoneId): Date = Date.from(x.atStartOfDay(zoneId).toInstant)
+
+  private def toLocalDate(x: Date): LocalDate = LocalDate.from(x.toInstant)
 
   private def findCalendarFolder(service: ExchangeService): Task[CalendarFolder] = Task {
     val rootFolder = Folder.bind(service, WellKnownFolderName.Root)

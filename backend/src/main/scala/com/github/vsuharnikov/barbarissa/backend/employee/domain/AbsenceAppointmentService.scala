@@ -9,6 +9,7 @@ import zio.macros.accessible
 object AbsenceAppointmentService {
   trait Service {
     def has(filter: SearchFilter): Task[Boolean]
+    def get(filter: SearchFilter): Task[Option[AbsenceAppointment]]
     def add(appointment: AbsenceAppointment): Task[Unit]
   }
 

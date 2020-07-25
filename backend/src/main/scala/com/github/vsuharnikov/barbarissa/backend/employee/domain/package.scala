@@ -5,5 +5,6 @@ import zio.Has
 package object domain {
   type AbsenceRepo               = Has[AbsenceRepo.Service]
   type EmployeeRepo              = Has[EmployeeRepo.Service]
+  type AbsenceReasonRepo         = Has[AbsenceReasonRepo.Service]
   type AbsenceAppointmentService = Has[AbsenceAppointmentService.Service]
 }

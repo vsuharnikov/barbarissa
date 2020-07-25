@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app
 
 import java.io.File
-import java.time.{Duration, LocalDate}
+import java.time.LocalDate
 import java.time.format.{DateTimeFormatter, TextStyle}
 import java.time.temporal.ChronoUnit
 import java.util.Locale
@@ -18,7 +18,7 @@ import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
 import zio.config.config
 import zio.interop.catz._
-import zio.{Has, RIO, Task, ZIO}
+import zio.{Has, RIO, ZIO}
 
 class EmployeeHttpApiRoutes[
     R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with ReportService with AbsenceAppointmentService](
@@ -116,7 +116,7 @@ class EmployeeHttpApiRoutes[
           absence  <- AbsenceRepo.get(eid, aid)
           report <- {
             val data = absenceClaimRequestFrom(employee, absence)
-            ReportService.generate(c.templates.web3tech, ToArgs.toArgs(data).toMap)
+            ReportService.generate(c.templates.web3techVacation, ToArgs.toArgs(data).toMap)
           }
         } yield report
 
@@ -201,10 +201,9 @@ class EmployeeHttpApiRoutes[
             case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
             case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
             case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          {
+          }, {
             case false => Ok("")
-            case true => Created("")
+            case true  => Created("")
           }
         )
     }
@@ -214,7 +213,7 @@ class EmployeeHttpApiRoutes[
     id = domain.id.asString,
     from = domain.from,
     daysQuantity = domain.daysQuantity,
-    reason = domain.reason
+    reason = domain.reason.name
   )
 
   private def httpEmployeeFrom(domain: Employee): HttpV0Employee = HttpV0Employee(
@@ -251,6 +250,11 @@ class EmployeeHttpApiRoutes[
 }
 
 object EmployeeHttpApiRoutes {
-  case class TemplatesConfig(web3tech: File)
+  case class TemplatesConfig(
+      web3techWithoutCompensation: File,
+      web3techVacation: File,
+      web3integratorWithoutCompensation: File,
+      web3integratorVacation: File
+  )
   case class Config(templates: TemplatesConfig)
 }

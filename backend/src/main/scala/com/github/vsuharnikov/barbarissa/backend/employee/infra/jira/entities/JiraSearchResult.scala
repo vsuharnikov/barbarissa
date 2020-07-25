@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities
 
 import java.time.LocalDate
 
@@ -12,6 +12,5 @@ import io.circe.generic.extras._
 @ConfiguredJsonCodec case class JiraSearchResultItemFields(
     @JsonKey("customfield_10437") startDate: LocalDate,
     @JsonKey("customfield_10438") daysQuantity: Float,
-    @JsonKey("customfield_10439") absenceReason: JiraSearchResultItemAbsenceReasonField
+    @JsonKey("customfield_10439") absenceReason: JiraValue
 )
-@JsonCodec case class JiraSearchResultItemAbsenceReasonField(id: String, value: String)

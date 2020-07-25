@@ -3,6 +3,7 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra
 import cats.syntax.apply._
 import com.github.vsuharnikov.barbarissa.backend.employee.EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Sex, error}
 import io.circe.syntax._

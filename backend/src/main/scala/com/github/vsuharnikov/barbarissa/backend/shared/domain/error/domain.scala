@@ -16,6 +16,10 @@ package object error {
 
   case class ValidationError(field: String, actual: String, expected: String) extends DomainError
 
+  case object ClaimNotRequired extends DomainError
+
+  case object TemplateNotFound extends DomainError // ???
+
   sealed trait RepoError extends DomainError
 
   case object RepoRecordNotFound extends RepoError

@@ -4,5 +4,6 @@ import io.circe.generic.JsonCodec
 
 @JsonCodec case class HttpV0UpdateEmployee(
     localizedName: String,
+    companyId: String,
     position: String
 )

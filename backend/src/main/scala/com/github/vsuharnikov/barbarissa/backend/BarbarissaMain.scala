@@ -6,8 +6,8 @@ import java.time.ZoneId
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointmentService, AbsenceRepo, EmployeeRepo}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.{AbsenceJiraRepo, EmployeeJiraRepo, MsExchangeAbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.employee.domain._
+import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
@@ -37,7 +37,11 @@ import scala.reflect.runtime.universe._
 object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
   case class BarbarissaConfig(backend: BackendConfig)
-  case class BackendConfig(httpApi: HttpApiConfig, jira: EmployeeJiraRepo.Config, msExchange: MsExchangeAbsenceAppointmentService.Config, routes: EmployeeHttpApiRoutes.Config)
+  case class BackendConfig(httpApi: HttpApiConfig,
+                           jira: EmployeeJiraRepo.Config,
+                           msExchange: MsExchangeAbsenceAppointmentService.Config,
+                           routes: EmployeeHttpApiRoutes.Config,
+                           absenceReasons: ConfigurableAbsenceReasonRepo.Config)
   case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
@@ -53,6 +57,7 @@ object BarbarissaMain extends App {
     with Logging
     with EmployeeRepo
     with AbsenceRepo
+    with AbsenceReasonRepo
     with ReportService
     with AbsenceAppointmentService
 
@@ -95,8 +100,10 @@ object BarbarissaMain extends App {
 
     val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) >>> MsExchangeAbsenceAppointmentService.live
 
+    val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
+
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
-      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ DocxReportService.live
+      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -166,5 +173,5 @@ object BarbarissaMain extends App {
   private def mkSwaggerModel[T](implicit tt: TypeTag[T]) =
     TypeBuilder.collectModels(tt.tpe, Set.empty, org.http4s.rho.swagger.DefaultSwaggerFormats, typeOf[AppTask[_]])
 
-  implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap[ZoneId](ZoneId.of, x => x.getId)
+  implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap(ZoneId.of, _.getId)
 }

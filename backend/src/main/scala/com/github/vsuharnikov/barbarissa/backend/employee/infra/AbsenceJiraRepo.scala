@@ -1,10 +1,10 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra
 
 import com.github.vsuharnikov.barbarissa.backend.employee
-import com.github.vsuharnikov.barbarissa.backend.employee.AbsenceId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.EmployeeJiraRepo.Config
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult}
+import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
 import org.http4s.Method._
@@ -41,7 +41,7 @@ object AbsenceJiraRepo {
               from = jira.fields.startDate,
               daysQuantity = jira.fields.daysQuantity.toInt,
               reason = Absence.Reason(
-                id = Absence.ReasonId(jira.fields.absenceReason.id),
+                id = AbsenceReasonId(jira.fields.absenceReason.id),
                 name = jira.fields.absenceReason.value
               )
             )
@@ -65,7 +65,7 @@ object AbsenceJiraRepo {
               from = jira.fields.startDate,
               daysQuantity = jira.fields.daysQuantity.toInt,
               reason = Absence.Reason(
-                id = Absence.ReasonId(jira.fields.absenceReason.id),
+                id = AbsenceReasonId(jira.fields.absenceReason.id),
                 name = jira.fields.absenceReason.value
               )
             )

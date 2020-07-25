@@ -2,7 +2,7 @@ package com.github.vsuharnikov.barbarissa.backend.employee.app
 
 import java.io.File
 import java.time.LocalDate
-import java.time.format.{DateTimeFormatter, TextStyle}
+import java.time.format.{DateTimeFormatter, FormatStyle, TextStyle}
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
@@ -21,13 +21,13 @@ import zio.interop.catz._
 import zio.{Has, RIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with ReportService with AbsenceAppointmentService](
+    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with ReportService with AbsenceAppointmentService](
     inflection: Inflection)
     extends JsonSupport[RIO[R, *]] {
   type HttpIO[A] = RIO[R, A]
 
   private val locale        = Locale.forLanguageTag("ru")
-  private val dateFormatter = DateTimeFormatter.ofPattern("dd LLL YYYY", locale)
+  private val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(new Locale("ru"))
 
   private val swaggerSyntax = new SwaggerSupport[HttpIO] {}
   import swaggerSyntax._
@@ -110,13 +110,29 @@ class EmployeeHttpApiRoutes[
         val eid = EmployeeId(employeeId)
         val aid = AbsenceId(absenceId)
 
+        // TODO
         val r = for {
-          c        <- config[EmployeeHttpApiRoutes.Config]
-          employee <- EmployeeRepo.get(eid)
-          absence  <- AbsenceRepo.get(eid, aid)
+          c             <- config[EmployeeHttpApiRoutes.Config]
+          employee      <- EmployeeRepo.get(eid)
+          absence       <- AbsenceRepo.get(eid, aid)
+          absenceReason <- AbsenceReasonRepo.get(absence.reason.id)
+          absenceReasonSuffix <- absenceReason.claim match {
+            case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
+            case Some(AbsenceClaimType.WithCompensation)    => ZIO.succeed("with-compensation")
+            case None                                       => ZIO.fail(domainError.ClaimNotRequired)
+          }
+          templateFile <- {
+            val companyId = employee.companyId.map(_.asString).getOrElse("unknown")
+            val fileName  = s"$companyId-$absenceReasonSuffix.docx"
+            val r         = c.templates.rootDir.toPath.resolve(fileName).toFile
+            // TODO log library
+            logger.warn(s"Can't find '$r' file")
+            if (r.isFile) ZIO.succeed(r)
+            else ZIO.fail(domainError.TemplateNotFound)
+          }
           report <- {
             val data = absenceClaimRequestFrom(employee, absence)
-            ReportService.generate(c.templates.web3techVacation, ToArgs.toArgs(data).toMap)
+            ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
           }
         } yield report
 
@@ -220,6 +236,7 @@ class EmployeeHttpApiRoutes[
     id = domain.id.asString,
     name = domain.name,
     localizedName = domain.localizedName,
+    companyId = domain.companyId.map(_.asString),
     email = domain.email,
     position = domain.position
   )
@@ -234,6 +251,7 @@ class EmployeeHttpApiRoutes[
 
   private def draft(domain: Employee, api: HttpV0UpdateEmployee): Employee = domain.copy(
     localizedName = api.localizedName.some,
+    companyId = api.companyId.some.map(CompanyId),
     position = api.position.some
   )
 
@@ -250,11 +268,6 @@ class EmployeeHttpApiRoutes[
 }
 
 object EmployeeHttpApiRoutes {
-  case class TemplatesConfig(
-      web3techWithoutCompensation: File,
-      web3techVacation: File,
-      web3integratorWithoutCompensation: File,
-      web3integratorVacation: File
-  )
+  case class TemplatesConfig(rootDir: File)
   case class Config(templates: TemplatesConfig)
 }

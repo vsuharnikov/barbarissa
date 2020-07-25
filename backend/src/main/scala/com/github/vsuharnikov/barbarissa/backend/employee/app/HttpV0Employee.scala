@@ -6,6 +6,7 @@ import io.circe.generic.JsonCodec
     id: String,
     name: String,
     localizedName: Option[String],
+    companyId: Option[String],
     email: String,
     position: Option[String]
 )

@@ -1,9 +1,9 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra
 
 import cats.syntax.apply._
-import com.github.vsuharnikov.barbarissa.backend.employee.EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData}
+import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Sex, error}
 import io.circe.syntax._
@@ -30,6 +30,7 @@ object EmployeeJiraRepo {
             JiraExtendedUserData(
               localizedName = draft.localizedName,
               position = draft.position,
+              companyId = draft.companyId.map(_.asString),
               sex = draft.sex.map {
                 case Sex.Male   => "male"
                 case Sex.Female => "female"
@@ -86,6 +87,7 @@ object EmployeeJiraRepo {
     name = basic.displayName,
     localizedName = extended.localizedName,
     email = basic.emailAddress,
+    companyId = extended.companyId.map(CompanyId),
     position = extended.position,
     sex = extended.sex.map {
       case "male"   => Sex.Male

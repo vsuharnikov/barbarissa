@@ -3,14 +3,17 @@ package com.github.vsuharnikov.barbarissa.backend
 import java.io.{PrintWriter, StringWriter}
 import java.security.Security
 import java.time.ZoneId
+import java.util.Properties
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{AbsenceJiraRepo, EmployeeJiraRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection, SqliteDataSource}
 import com.typesafe.config.ConfigFactory
+import io.github.gaelrenoux.tranzactio.doobie.Database
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -20,6 +23,7 @@ import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
 import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
 import zio.config.magnolia.DeriveConfigDescriptor.{Descriptor, descriptor}
@@ -31,6 +35,7 @@ import zio.logging._
 import zio.logging.slf4j.Slf4jLogger
 import zio.{Tag => _, TypeTag => _, config => _, _}
 
+import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe._
 
@@ -41,7 +46,8 @@ object BarbarissaMain extends App {
                            jira: EmployeeJiraRepo.Config,
                            msExchange: MsExchangeAbsenceAppointmentService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
-                           absenceReasons: ConfigurableAbsenceReasonRepo.Config)
+                           absenceReasons: ConfigurableAbsenceReasonRepo.Config,
+                           sqlite: SqliteDataSource.Config)
   case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
@@ -58,6 +64,7 @@ object BarbarissaMain extends App {
     with EmployeeRepo
     with AbsenceRepo
     with AbsenceReasonRepo
+    with VersionRepo
     with ReportService
     with AbsenceAppointmentService
 
@@ -102,8 +109,16 @@ object BarbarissaMain extends App {
 
     val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
 
+    val dataSourceLayer = Blocking.live ++ configLayer.narrow(_.barbarissa.backend.sqlite) >>> SqliteDataSource.live
+
+    val databaseLayer = Blocking.live ++ Clock.live ++ dataSourceLayer >>> Database.fromDatasource
+
+    val versionRepoLayer = databaseLayer >>> DbVersionRepo.live
+
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
-      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++ configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++ absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live
+      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++
+        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++
+        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live ++ versionRepoLayer
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -174,4 +189,12 @@ object BarbarissaMain extends App {
     TypeBuilder.collectModels(tt.tpe, Set.empty, org.http4s.rho.swagger.DefaultSwaggerFormats, typeOf[AppTask[_]])
 
   implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap(ZoneId.of, _.getId)
+  implicit val propertiesDescriptor: Descriptor[Properties] = Descriptor[Map[String, String]].xmap(
+    { raw =>
+      val p = new Properties()
+      raw.foreach { case (k, v) => p.put(k, v) }
+      p
+    },
+    _.asScala.map { case (k, v) => s"$k" -> s"$v" }.toMap
+  )
 }

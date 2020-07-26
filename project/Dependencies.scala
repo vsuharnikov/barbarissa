@@ -11,7 +11,7 @@ object Dependencies {
     val zioConfig       = "1.0.0-RC24"
     val zioInteropCats  = "2.1.4.0-RC17"
     val zioLogging      = "0.3.2"
-    val zioTestIntelliJ = "1.0.0-RC20"
+    val zioTestIntelliJ = "1.0.0-RC21-2"
     val diffx           = "0.3.29"
     val slf4j           = "1.7.30"
     val logbackClassic  = "1.2.3"
@@ -21,6 +21,10 @@ object Dependencies {
     val scopt           = "4.0.0-RC2"
     val scalaTest       = "3.1.1"
     val newType         = "0.4.4"
+    val classGraph      = "4.8.87"
+    val tranzactio      = "0.6.0"
+    val doobie          = "0.9.0"
+    val sqlite          = "3.32.3.1"
   }
 
   val fp = Seq(
@@ -34,7 +38,8 @@ object Dependencies {
     "com.propensive"         %% "magnolia"           % versionOf.magnolia,
     "org.scala-lang"         % "scala-reflect"       % versionOf.scala % Provided, // For magnolia
     "io.estatico"            %% "newtype"            % versionOf.newType,
-    "org.scala-lang.modules" %% "scala-java8-compat" % "0.9.1" // TODO
+    "org.scala-lang.modules" %% "scala-java8-compat" % "0.9.1", // TODO
+    "io.github.classgraph"   % "classgraph"          % versionOf.classGraph // to scan resources
   )
 
   val io = Seq(
@@ -43,6 +48,12 @@ object Dependencies {
     "dev.zio" %% "zio-streams"
   ).map(_     % versionOf.zio) ++ Seq(
     "dev.zio" %% "zio-interop-cats" % versionOf.zioInteropCats
+  )
+
+  val db = Seq(
+    "io.github.gaelrenoux" %% "tranzactio"  % versionOf.tranzactio,
+    "org.tpolecat"         %% "doobie-core" % versionOf.doobie,
+    "org.xerial"           % "sqlite-jdbc"  % versionOf.sqlite
   )
 
   val logs = Seq(

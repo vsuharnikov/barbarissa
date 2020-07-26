@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.apply._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}

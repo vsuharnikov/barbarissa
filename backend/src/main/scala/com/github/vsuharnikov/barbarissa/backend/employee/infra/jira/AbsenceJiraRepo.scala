@@ -1,8 +1,8 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import com.github.vsuharnikov.barbarissa.backend.employee
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.EmployeeJiraRepo.Config
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.EmployeeJiraRepo.Config
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult}
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport

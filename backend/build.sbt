@@ -8,7 +8,7 @@ V.scalaPackage := "com.github.vsuharnikov.barbarissa.backend"
 
 libraryDependencies ++= {
   import Dependencies._
-  fp ++ meta ++ io ++ logs ++ config ++ serialization ++ http ++ reports ++ language ++ cli ++ tests ++ Seq(
+  fp ++ meta ++ io ++ logs ++ config ++ serialization ++ db ++ http ++ reports ++ language ++ cli ++ tests ++ Seq(
     "com.microsoft.ews-java-api" % "ews-java-api" % "2.0",
     // java.lang.ClassNotFoundException: javax.xml.ws.http.HTTPException
     "jakarta.xml.ws" % "jakarta.xml.ws-api" % "2.3.3"

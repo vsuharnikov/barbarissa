@@ -64,7 +64,7 @@ object BarbarissaMain extends App {
     with EmployeeRepo
     with AbsenceRepo
     with AbsenceReasonRepo
-    with VersionRepo
+    with MigrationRepo
     with ReportService
     with AbsenceAppointmentService
 
@@ -113,7 +113,7 @@ object BarbarissaMain extends App {
 
     val databaseLayer = Blocking.live ++ Clock.live ++ dataSourceLayer >>> Database.fromDatasource
 
-    val versionRepoLayer = databaseLayer >>> DbVersionRepo.live
+    val versionRepoLayer = databaseLayer >>> DbMigrationRepo.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++

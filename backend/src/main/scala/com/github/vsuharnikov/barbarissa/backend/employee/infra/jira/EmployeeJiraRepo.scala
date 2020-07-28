@@ -76,11 +76,11 @@ object EmployeeJiraRepo {
     }
   }
 
-  private def extendedDataUri(userName: String): Uri =
-    uri"https://jira.wavesplatform.com/rest/api/2/user/properties/hr".withQueryParam("username", userName)
+  private def basicDataUri(key: String): Uri =
+    uri"https://jira.wavesplatform.com/rest/api/2/user".withQueryParam("username", key)
 
-  private def basicDataUri(userName: String): Uri =
-    uri"https://jira.wavesplatform.com/rest/api/2/user".withQueryParam("username", userName)
+  private def extendedDataUri(key: String): Uri =
+    uri"https://jira.wavesplatform.com/rest/api/2/user/properties/hr".withQueryParam("username", key)
 
   private def toDomain(basic: JiraBasicUserData, extended: JiraExtendedUserData): Employee = Employee(
     id = EmployeeId(basic.name),

@@ -9,7 +9,7 @@ import zio.{Has, Task, ZIO, ZLayer}
 
 object DbMigrationRepo {
   private def updateVersionSql(module: String, draftVersion: Int) =
-    sql"""INSERT INTO LastMigration(module, version) VALUES ($module, $draftVersion)"""
+    sql"""INSERT OR REPLACE INTO LastMigration(module, version) VALUES ($module, $draftVersion)"""
 
   private val migrations = List(
     sql"""CREATE TABLE LastMigration(

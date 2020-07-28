@@ -10,6 +10,6 @@ object AbsenceRepo {
   trait Service {
     def get(by: EmployeeId): ZIO[Any, error.RepoError, List[Absence]]
     def get(by: EmployeeId, absenceId: AbsenceId): ZIO[Any, error.RepoError, Absence]
-    def getAfter(absenceId: AbsenceId, num: Int): ZIO[Any, error.RepoError, Absence]
+    def getAfter(absenceId: AbsenceId, num: Int): ZIO[Any, error.RepoError, List[Absence]]
   }
 }

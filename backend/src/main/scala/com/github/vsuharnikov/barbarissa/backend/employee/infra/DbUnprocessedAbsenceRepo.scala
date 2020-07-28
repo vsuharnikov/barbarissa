@@ -32,7 +32,7 @@ FROM LastKnownAbsence WHERE done = TRUE ORDER BY absenceId LIMIT $num
 
           override def update(draft: UnprocessedAbsence): Task[Unit] = database.transactionOrDie {
             import draft._
-            tzio(sql"""INSERT OR UPDATE INTO
+            tzio(sql"""INSERT OR REPLACE INTO
 UnprocessedAbsence(absenceId, done, hasRequiredClaim, hasAppointment, retries)
 VALUES($absenceId, $done, $hasRequiredClaim, $hasAppointment, $retries)
 """.update.run).unit

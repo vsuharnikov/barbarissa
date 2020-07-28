@@ -3,8 +3,8 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 import com.github.vsuharnikov.barbarissa.backend.employee
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.EmployeeJiraRepo.Config
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult}
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult, JiraSearchResultItem}
+import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
 import org.http4s.Method._
@@ -21,60 +21,50 @@ object AbsenceJiraRepo {
       private val commonHeaders = Headers.of(Authorization(BasicCredentials(config.credentials.username, config.credentials.password)))
 
       private val searchRequestFields = List(
+        "reporter",
         "customfield_10439", // "Absence reason"
         "customfield_10437", // "Start Date"
         "customfield_10438" // "Quantiny (days)"
       )
 
-      override def get(by: employee.EmployeeId): ZIO[Any, error.RepoError, List[Absence]] = {
-        val req = JiraSearchRequest(
-          jql = s"""reporter=${by.asString} AND project="HR Services" AND type=Absence ORDER BY created DESC""",
-          startAt = 0,
-          maxResults = 3,
-          searchRequestFields
-        )
-        val httpReq = Request[Task](POST, searchAbsenceUri, headers = commonHeaders).withEntity(req)
-        run(httpReq)(_.as[JiraSearchResult]).map { resp =>
-          resp.issues.map { jira =>
-            Absence(
-              id = AbsenceId(jira.key),
-              from = jira.fields.startDate,
-              daysQuantity = jira.fields.daysQuantity.toInt,
-              reason = Absence.Reason(
-                id = AbsenceReasonId(jira.fields.absenceReason.id),
-                name = jira.fields.absenceReason.value
-              )
-            )
-          }
+      // TODO pagination
+      override def get(by: employee.EmployeeId): ZIO[Any, error.RepoError, List[Absence]] =
+        get(
+          JiraSearchRequest(
+            jql = s"""reporter=${by.asString} AND project="HR Services" AND type=Absence ORDER BY key DESC""",
+            startAt = 0,
+            maxResults = 3,
+            searchRequestFields
+          )) { resp =>
+          resp.issues.map(absenceFrom)
         }
-      }
 
-      // TODO
-      override def get(by: employee.EmployeeId, absenceId: AbsenceId): ZIO[Any, error.RepoError, Absence] = {
-        val req = JiraSearchRequest(
-          jql = s"""key=${absenceId.asString}""",
-          startAt = 0,
-          maxResults = 1,
-          searchRequestFields
-        )
-        val httpReq = Request[Task](POST, searchAbsenceUri, headers = commonHeaders).withEntity(req)
-        run(httpReq)(_.as[JiraSearchResult]).map { resp =>
-          resp.issues.headOption.map { jira =>
-            Absence(
-              id = AbsenceId(jira.key),
-              from = jira.fields.startDate,
-              daysQuantity = jira.fields.daysQuantity.toInt,
-              reason = Absence.Reason(
-                id = AbsenceReasonId(jira.fields.absenceReason.id),
-                name = jira.fields.absenceReason.value
-              )
-            )
-          }.get // TODO
+      override def get(by: employee.EmployeeId, absenceId: AbsenceId): ZIO[Any, error.RepoError, Absence] =
+        get(
+          JiraSearchRequest(
+            jql = s"""key=${absenceId.asString}""",
+            startAt = 0,
+            maxResults = 1,
+            searchRequestFields
+          )) { resp =>
+          resp.issues.headOption.map(absenceFrom).get // TODO
         }
-      }
 
-      private def get[T](uri: Uri)(implicit ed: EntityDecoder[Task, T]): ZIO[Any, error.RepoError, T] =
-        run(Request[Task](uri = uri, headers = commonHeaders))(_.as[T])
+      override def getAfter(absenceId: AbsenceId, num: Int): ZIO[Any, error.RepoError, List[Absence]] =
+        get(
+          JiraSearchRequest(
+            jql = s"""project="HR Services" AND type=Absence AND key >= ${absenceId.asString} ORDER BY key""",
+            startAt = 0,
+            maxResults = num,
+            searchRequestFields
+          )) { resp =>
+          resp.issues.map(absenceFrom)
+        }
+
+      private def get[T](req: JiraSearchRequest)(f: JiraSearchResult => T): ZIO[Any, error.RepoError, T] = {
+        val httpReq = Request[Task](POST, searchAbsenceUri, headers = commonHeaders).withEntity(req)
+        run(httpReq)(_.as[JiraSearchResult]).map(f)
+      }
 
       private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): ZIO[Any, error.RepoError, T] =
         client
@@ -100,4 +90,15 @@ object AbsenceJiraRepo {
 
   private val searchAbsenceUri: Uri =
     uri"https://jira.wavesplatform.com/rest/api/2/search"
+
+  def absenceFrom(jira: JiraSearchResultItem): Absence = Absence(
+    id = AbsenceId(jira.key),
+    employeeId = EmployeeId(jira.fields.reporter.name),
+    from = jira.fields.startDate,
+    daysQuantity = jira.fields.daysQuantity.toInt,
+    reason = Absence.Reason(
+      id = AbsenceReasonId(jira.fields.absenceReason.id),
+      name = jira.fields.absenceReason.value
+    )
+  )
 }

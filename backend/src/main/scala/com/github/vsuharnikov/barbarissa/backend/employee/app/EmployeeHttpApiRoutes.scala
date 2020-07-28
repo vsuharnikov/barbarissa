@@ -11,8 +11,8 @@ import com.github.vsuharnikov.barbarissa.backend.employee._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
-import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
+import com.github.vsuharnikov.barbarissa.backend.shared.app.{JsonSupport, ListResponse, RoutesParsers}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, MultipleResultsCursor, ReportService, error => domainError}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
@@ -33,6 +33,8 @@ class EmployeeHttpApiRoutes[
   import swaggerSyntax._
 
   val rhoRoutes: RhoRoutes[HttpIO] = new RhoRoutes[HttpIO] {
+    private implicit val multiResultsCursorParser = RoutesParsers.multipleResultsCursorParser[HttpIO]
+
     "Gets an employee by id" **
       "employee" @@
         GET / "api" / "v0" / "employee" / pathVar[String]("id") |>> { id: String =>
@@ -72,35 +74,37 @@ class EmployeeHttpApiRoutes[
 
     "Gets an employee's absences" **
       "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("id") / "absence" |>> { id: String =>
-      AbsenceRepo
-        .get(EmployeeId(id))
-        .fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          x => Ok(x.map(httpAbsenceFrom))
-        )
+        GET / "api" / "v0" / "employee" / pathVar[String]("id") / "absence" +? param[Option[MultipleResultsCursor]]("cursor") |>> {
+      (id: String, cursor: Option[MultipleResultsCursor]) =>
+        AbsenceRepo
+          .get(EmployeeId(id), cursor)
+          .fold(
+            {
+              case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
+              case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
+              case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
+              case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
+            }, {
+              case (xs, nextCursor) => Ok(ListResponse(xs.map(httpAbsenceFrom), nextCursor))
+            }
+          )
     }
 
     "Gets an employee's absence by id" **
       "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") |>> {
-      (employeeId: String, absenceId: String) =>
-        AbsenceRepo
-          .get(EmployeeId(employeeId), AbsenceId(absenceId))
-          .fold(
-            {
-              case domainError.RepoRecordNotFound => NotFound("")
-              case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-              case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-              case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-            },
-            x => Ok(httpAbsenceFrom(x))
-          )
+        GET / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") +?
+      param[Option[MultipleResultsCursor]]("cursor") |>> { (employeeId: String, absenceId: String, cursor: Option[MultipleResultsCursor]) =>
+      AbsenceRepo
+        .get(EmployeeId(employeeId), AbsenceId(absenceId))
+        .fold(
+          {
+            case domainError.RepoRecordNotFound => NotFound("")
+            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
+            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
+            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
+          },
+          { x => Ok(httpAbsenceFrom(x)) }
+        )
     }
 
     "Generates a claim for employee's absence" **

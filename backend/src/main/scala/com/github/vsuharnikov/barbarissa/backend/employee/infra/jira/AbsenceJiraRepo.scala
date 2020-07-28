@@ -1,12 +1,13 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
+import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.EmployeeJiraRepo.Config
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult, JiraSearchResultItem}
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MultipleResultsCursor, error}
 import org.http4s.Method._
 import org.http4s._
 import org.http4s.client.Client
@@ -27,16 +28,16 @@ object AbsenceJiraRepo {
         "customfield_10438" // "Quantiny (days)"
       )
 
-      // TODO pagination
-      override def get(by: employee.EmployeeId): ZIO[Any, error.RepoError, List[Absence]] =
+      override def get(by: employee.EmployeeId,
+                       cursor: Option[MultipleResultsCursor]): ZIO[Any, error.RepoError, (List[Absence], Option[MultipleResultsCursor])] =
         get(
           JiraSearchRequest(
-            jql = s"""reporter=${by.asString} AND project="HR Services" AND type=Absence ORDER BY key DESC""",
-            startAt = 0,
-            maxResults = 3,
+            jql = s"""reporter=${by.asString} AND project="HR Services" AND type=Absence AND "Absence reason" is not EMPTY ORDER BY key DESC""",
+            startAt = cursor.fold(0)(_.startAt),
+            maxResults = cursor.fold(10)(_.maxResults),
             searchRequestFields
           )) { resp =>
-          resp.issues.map(absenceFrom)
+          (resp.issues.map(absenceFrom), nextCursor(resp))
         }
 
       override def get(by: employee.EmployeeId, absenceId: AbsenceId): ZIO[Any, error.RepoError, Absence] =
@@ -50,15 +51,16 @@ object AbsenceJiraRepo {
           resp.issues.headOption.map(absenceFrom).get // TODO
         }
 
-      override def getAfter(absenceId: AbsenceId, num: Int): ZIO[Any, error.RepoError, List[Absence]] =
+      override def getAfter(absenceId: AbsenceId,
+                            cursor: Option[MultipleResultsCursor]): ZIO[Any, error.RepoError, (List[Absence], Option[MultipleResultsCursor])] =
         get(
           JiraSearchRequest(
-            jql = s"""project="HR Services" AND type=Absence AND key >= ${absenceId.asString} ORDER BY key""",
-            startAt = 0,
-            maxResults = num,
+            jql = s"""project="HR Services" AND type=Absence AND key >= ${absenceId.asString} AND "Absence reason" is not EMPTY ORDER BY key""",
+            startAt = cursor.fold(0)(_.startAt),
+            maxResults = cursor.fold(10)(_.maxResults),
             searchRequestFields
           )) { resp =>
-          resp.issues.map(absenceFrom)
+          (resp.issues.map(absenceFrom), nextCursor(resp))
         }
 
       private def get[T](req: JiraSearchRequest)(f: JiraSearchResult => T): ZIO[Any, error.RepoError, T] = {
@@ -85,6 +87,11 @@ object AbsenceJiraRepo {
             case ForwardError(error) => ZIO.fail(error)
             case _                   => ZIO.fail(error.RepoUnknown)
           }
+
+      def nextCursor(resp: JiraSearchResult): Option[MultipleResultsCursor] = {
+        val retrieved = resp.startAt + resp.issues.size
+        if (retrieved < resp.total) MultipleResultsCursor(retrieved, resp.maxResults).some else none
+      }
     }
   }
 

@@ -7,6 +7,7 @@ import zio.macros.accessible
 object UnprocessedAbsenceRepo {
   trait Service {
     def get(num: Int): Task[List[UnprocessedAbsence]]
+    def add(drafts: List[UnprocessedAbsence]): Task[Unit]
     def update(draft: UnprocessedAbsence): Task[Unit]
   }
 }

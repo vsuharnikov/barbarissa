@@ -11,8 +11,8 @@ import com.github.vsuharnikov.barbarissa.backend.employee._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
-import com.github.vsuharnikov.barbarissa.backend.shared.app.{JsonSupport, ListResponse, RoutesParsers}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, MultipleResultsCursor, ReportService, error => domainError}
+import com.github.vsuharnikov.barbarissa.backend.shared.app.{HttpSearchCursor, JsonSupport, ListResponse, RoutesParsers}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
@@ -21,7 +21,7 @@ import zio.interop.catz._
 import zio.{Has, RIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with ReportService with AbsenceAppointmentService](
+    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonSupport[RIO[R, *]] {
   type HttpIO[A] = RIO[R, A]
@@ -33,13 +33,14 @@ class EmployeeHttpApiRoutes[
   import swaggerSyntax._
 
   val rhoRoutes: RhoRoutes[HttpIO] = new RhoRoutes[HttpIO] {
-    private implicit val multiResultsCursorParser = RoutesParsers.multipleResultsCursorParser[HttpIO]
+    val parsers = new RoutesParsers[HttpIO]
+    import parsers._
 
     "Gets an employee by id" **
       "employee" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("id") |>> { id: String =>
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { id: EmployeeId =>
       EmployeeRepo
-        .get(EmployeeId(id))
+        .get(id)
         .fold(
           {
             case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
@@ -53,12 +54,12 @@ class EmployeeHttpApiRoutes[
 
     "Updates an employee by id" **
       "employee" @@
-        PATCH / "api" / "v0" / "employee" / pathVar[String]("id") ^ circeJsonDecoder[HttpV0UpdateEmployee] |>> {
-      (id: String, api: HttpV0UpdateEmployee) =>
+        PATCH / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") ^ circeJsonDecoder[HttpV0UpdateEmployee] |>> {
+      (id: EmployeeId, api: HttpV0UpdateEmployee) =>
         val r = for {
-          orig    <- EmployeeRepo.get(EmployeeId(id))
+          orig    <- EmployeeRepo.get(id)
           _       <- EmployeeRepo.update(draft(orig, api))
-          updated <- EmployeeRepo.get(EmployeeId(id))
+          updated <- EmployeeRepo.get(id)
         } yield updated
 
         r.fold(
@@ -74,10 +75,10 @@ class EmployeeHttpApiRoutes[
 
     "Gets an employee's absences" **
       "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("id") / "absence" +? param[Option[MultipleResultsCursor]]("cursor") |>> {
-      (id: String, cursor: Option[MultipleResultsCursor]) =>
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") / "absence" +? param[Option[HttpSearchCursor]]("cursor") |>> {
+      (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
         AbsenceRepo
-          .get(EmployeeId(id), cursor)
+          .getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
           .fold(
             {
               case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
@@ -85,17 +86,16 @@ class EmployeeHttpApiRoutes[
               case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
               case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
             }, {
-              case (xs, nextCursor) => Ok(ListResponse(xs.map(httpAbsenceFrom), nextCursor))
+              case (xs, nextCursor) => Ok(ListResponse(xs.map(httpAbsenceFrom), nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))))
             }
           )
     }
 
     "Gets an employee's absence by id" **
       "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") +?
-      param[Option[MultipleResultsCursor]]("cursor") |>> { (employeeId: String, absenceId: String, cursor: Option[MultipleResultsCursor]) =>
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") |>> { (eid: EmployeeId, aid: AbsenceId) =>
       AbsenceRepo
-        .get(EmployeeId(employeeId), AbsenceId(absenceId))
+        .get(eid, aid)
         .fold(
           {
             case domainError.RepoRecordNotFound => NotFound("")
@@ -109,18 +109,15 @@ class EmployeeHttpApiRoutes[
 
     "Generates a claim for employee's absence" **
       "absence" @@
-        POST / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") / "claim" |>> {
-      (employeeId: String, absenceId: String) =>
-        val eid = EmployeeId(employeeId)
-        val aid = AbsenceId(absenceId)
-
+        POST / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") / "claim" |>> {
+      (eid: EmployeeId, aid: AbsenceId) =>
         // TODO
         val r = for {
           c             <- config[EmployeeHttpApiRoutes.Config]
           employee      <- EmployeeRepo.get(eid)
           absence       <- AbsenceRepo.get(eid, aid)
           absenceReason <- AbsenceReasonRepo.get(absence.reason.id)
-          absenceReasonSuffix <- absenceReason.claim match {
+          absenceReasonSuffix <- absenceReason.needClaim match {
             case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
             case Some(AbsenceClaimType.WithCompensation)    => ZIO.succeed("with-compensation")
             case None                                       => ZIO.fail(domainError.ClaimNotRequired)
@@ -153,11 +150,8 @@ class EmployeeHttpApiRoutes[
 
     "Gets an appointment for employee's absence" **
       "appointment" @@
-        GET / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") / "appointment" |>> {
-      (employeeId: String, absenceId: String) =>
-        val eid = EmployeeId(employeeId)
-        val aid = AbsenceId(absenceId)
-
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> {
+      (eid: EmployeeId, aid: AbsenceId) =>
         val r = for {
           absence <- AbsenceRepo.get(eid, aid)
           maybeAppointment <- {
@@ -187,11 +181,8 @@ class EmployeeHttpApiRoutes[
 
     "Places an appointment for employee's absence" **
       "appointment" @@
-        PUT / "api" / "v0" / "employee" / pathVar[String]("employeeId") / "absence" / pathVar[String]("absenceId") / "appointment" |>> {
-      (employeeId: String, absenceId: String) =>
-        val eid = EmployeeId(employeeId)
-        val aid = AbsenceId(absenceId)
-
+        PUT / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> {
+      (eid: EmployeeId, aid: AbsenceId) =>
         val r = for {
           employee <- EmployeeRepo.get(eid)
           absence  <- AbsenceRepo.get(eid, aid)
@@ -226,6 +217,12 @@ class EmployeeHttpApiRoutes[
             case true  => Created("")
           }
         )
+    }
+
+    "Refreshes unprocessed items" **
+      "processing" @@
+        POST / "api" / "v0" / "processing" / "refreshUnprocessed" |>> {
+        ProcessingService.refreshUnprocessed.as(Ok(""))
     }
   }
 

@@ -22,6 +22,8 @@ object ConfigurableAbsenceReasonRepo {
           case Some(value) => ZIO.succeed(value)
           case None        => ZIO.fail(error.RepoRecordNotFound)
         }
+
+      override def all: ZIO[Any, error.RepoError, Map[AbsenceReasonId, AbsenceReason]] = ZIO.succeed(config.reasons)
     }
   }
 }

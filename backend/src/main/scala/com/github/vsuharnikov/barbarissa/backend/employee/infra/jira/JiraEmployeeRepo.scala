@@ -5,6 +5,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, Empl
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData}
 import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.ForwardError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Sex, error}
 import io.circe.syntax._
 import org.http4s.Method._
@@ -15,7 +16,7 @@ import org.http4s.syntax.all._
 import zio.interop.catz._
 import zio.{Task, ZIO, ZLayer}
 
-object EmployeeJiraRepo {
+object JiraEmployeeRepo {
   case class Config(credentials: BasicCredentials) // TODO server
 
   val live = ZLayer.fromServices[Config, Client[Task], EmployeeRepo.Service] { (config, client) =>
@@ -96,4 +97,3 @@ object EmployeeJiraRepo {
   )
 }
 
-case class ForwardError(x: error.RepoError) extends RuntimeException(s"Error: $x", null, true, false)

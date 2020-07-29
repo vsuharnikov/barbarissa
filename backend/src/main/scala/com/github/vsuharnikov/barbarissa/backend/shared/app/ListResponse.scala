@@ -3,11 +3,10 @@ package com.github.vsuharnikov.barbarissa.backend.shared.app
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.MultipleResultsCursor
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
-case class ListResponse[T](items: List[T], nextCursor: Option[MultipleResultsCursor])
+case class ListResponse[T](items: List[T], nextCursor: Option[HttpSearchCursor])
 object ListResponse {
   implicit def listResponseEncoder[T: Encoder]: Encoder[ListResponse[T]] =
     (a: ListResponse[T]) =>

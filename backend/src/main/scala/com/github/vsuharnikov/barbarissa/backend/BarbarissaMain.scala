@@ -9,7 +9,7 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{AbsenceJiraRepo, EmployeeJiraRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection, SqliteDataSource}
 import com.typesafe.config.ConfigFactory
@@ -43,7 +43,7 @@ object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
   case class BarbarissaConfig(backend: BackendConfig)
   case class BackendConfig(httpApi: HttpApiConfig,
-                           jira: EmployeeJiraRepo.Config,
+                           jira: JiraEmployeeRepo.Config,
                            msExchange: MsExchangeAbsenceAppointmentService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
@@ -67,6 +67,7 @@ object BarbarissaMain extends App {
     with MigrationRepo
     with ReportService
     with AbsenceAppointmentService
+    with ProcessingService
 
   private type AppTask[A] = RIO[AppEnvironment, A]
 
@@ -101,9 +102,9 @@ object BarbarissaMain extends App {
 
     val httpClientLayer = httpClient.map(Logger[Task](logBody = true, logHeaders = true)(_)).toLayer
 
-    val employeeJiraRepositoryLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> EmployeeJiraRepo.live
+    val employeeJiraRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live
 
-    val absenceJiraRepositoryLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> AbsenceJiraRepo.live
+    val absenceJiraRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraAbsenceRepo.live
 
     val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) >>> MsExchangeAbsenceAppointmentService.live
 
@@ -113,12 +114,20 @@ object BarbarissaMain extends App {
 
     val databaseLayer = Blocking.live ++ Clock.live ++ dataSourceLayer >>> Database.fromDatasource
 
-    val versionRepoLayer = databaseLayer >>> DbMigrationRepo.live
+    val migrationRepoLayer = databaseLayer >>> DbMigrationRepo.live
+
+    val lastKnownAbsenceRepoLayer = databaseLayer ++ migrationRepoLayer >>> DbLastKnownAbsenceRepo.live
+
+    // lastKnownAbsenceRepoLayer to make dependency. Without this we will get the "database is locked" error
+    val unprocessedAbsenceRepo = databaseLayer ++ migrationRepoLayer ++ lastKnownAbsenceRepoLayer >>> DbUnprocessedAbsenceRepo.live
+
+    val processingServiceLayer = lastKnownAbsenceRepoLayer ++ absenceJiraRepoLayer ++ absenceReasonRepoLayer ++ unprocessedAbsenceRepo >>> ProcessingService.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++
-        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepositoryLayer ++ absenceJiraRepositoryLayer ++
-        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live ++ versionRepoLayer
+        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepoLayer ++ absenceJiraRepoLayer ++
+        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live ++ migrationRepoLayer ++
+        processingServiceLayer
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -155,6 +164,7 @@ object BarbarissaMain extends App {
           Tag(name = "employee"),
           Tag(name = "absence"),
           Tag(name = "appointment"),
+          Tag(name = "processing"),
         )
       )
 

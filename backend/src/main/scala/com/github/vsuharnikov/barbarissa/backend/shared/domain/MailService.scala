@@ -18,6 +18,7 @@ object MailService {
   }
 
   // TODO Retries
+  // TODO Separate file
   val live = ZLayer.fromServicesM[Blocking.Service, MsExchangeService.Service, Any, Throwable, Service] { (blocking, msExchange) =>
     msExchange.get.map { service =>
       new Service {

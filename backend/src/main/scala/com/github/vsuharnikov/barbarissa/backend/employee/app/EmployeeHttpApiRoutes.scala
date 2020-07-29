@@ -13,7 +13,9 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.{HttpSearchCursor, JsonSupport, ListResponse, RoutesParsers}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.ForwardError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
+import doobie.`enum`.FetchDirection.Forward
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
@@ -22,7 +24,7 @@ import zio.interop.catz._
 import zio.{Has, RIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with ReportService with AbsenceAppointmentService with ProcessingService](
+    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonSupport[RIO[R, *]] {
   type HttpIO[A] = RIO[R, A]
@@ -42,15 +44,10 @@ class EmployeeHttpApiRoutes[
         GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { id: EmployeeId =>
       EmployeeRepo
         .get(id)
-        .fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          x => Ok(httpEmployeeFrom(x))
-        )
+        .map {
+          case Some(x) => Ok(httpEmployeeFrom(x))
+          case None    => NotFound(s"Can't find an employee with id=$id") // TODO
+        }
     }
 
     "Updates an employee by id" **
@@ -58,20 +55,20 @@ class EmployeeHttpApiRoutes[
         PATCH / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") ^ circeJsonDecoder[HttpV0UpdateEmployee] |>> {
       (id: EmployeeId, api: HttpV0UpdateEmployee) =>
         val r = for {
-          orig    <- EmployeeRepo.get(id)
+          orig <- EmployeeRepo.get(id)
+          orig <- orig match {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+          }
           _       <- EmployeeRepo.update(draft(orig, api))
           updated <- EmployeeRepo.get(id)
+          updated <- updated match {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+          }
         } yield updated
 
-        r.fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          x => Ok(httpEmployeeFrom(x))
-        )
+        r.map(x => Ok(httpEmployeeFrom(x)))
     }
 
     "Gets an employee's absences" **
@@ -80,32 +77,20 @@ class EmployeeHttpApiRoutes[
       (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
         AbsenceRepo
           .getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
-          .fold(
-            {
-              case domainError.RepoRecordNotFound => NotFound(s"Can't find an employee with id=$id") // TODO
-              case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-              case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-              case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-            }, {
-              case (xs, nextCursor) => Ok(ListResponse(xs.map(httpAbsenceFrom), nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))))
-            }
-          )
+          .map {
+            case (xs, nextCursor) => Ok(ListResponse(xs.map(httpAbsenceFrom), nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))))
+          }
     }
 
     "Gets an employee's absence by id" **
       "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") |>> { (eid: EmployeeId, aid: AbsenceId) =>
-      AbsenceRepo
-        .get(eid, aid)
-        .fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound("")
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          { x => Ok(httpAbsenceFrom(x)) }
-        )
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") |>> {
+      (eid: EmployeeId, aid: AbsenceId) =>
+        AbsenceRepo
+          .get(aid)
+          .map { x =>
+            Ok(httpAbsenceFrom(x))
+          }
     }
 
     "Generates a claim for employee's absence" **
@@ -114,9 +99,13 @@ class EmployeeHttpApiRoutes[
       (eid: EmployeeId, aid: AbsenceId) =>
         // TODO
         val r = for {
-          c             <- config[EmployeeHttpApiRoutes.Config]
-          employee      <- EmployeeRepo.get(eid)
-          absence       <- AbsenceRepo.get(eid, aid)
+          c        <- config[EmployeeHttpApiRoutes.Config]
+          employee <- EmployeeRepo.get(eid)
+          employee <- employee match {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+          }
+          absence       <- AbsenceRepo.get(aid)
           absenceReason <- AbsenceReasonRepo.get(absence.reason.id)
           absenceReasonSuffix <- absenceReason.needClaim match {
             case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
@@ -154,7 +143,7 @@ class EmployeeHttpApiRoutes[
         GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("employeeId") / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> {
       (eid: EmployeeId, aid: AbsenceId) =>
         val r = for {
-          absence <- AbsenceRepo.get(eid, aid)
+          absence <- AbsenceRepo.get(aid)
           maybeAppointment <- {
             val searchFilter = SearchFilter(
               start = absence.from,
@@ -164,20 +153,12 @@ class EmployeeHttpApiRoutes[
             AbsenceAppointmentService.get(searchFilter)
           }
           appointment <- maybeAppointment match {
-            case None    => ZIO.fail(domainError.RepoRecordNotFound)
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
             case Some(x) => ZIO.succeed(x)
           }
         } yield appointment
 
-        r.fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound("")
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          },
-          x => Ok(httpAbsenceAppointmentFrom(x))
-        )
+        r.map(x => Ok(httpAbsenceAppointmentFrom(x)))
     }
 
     "Places an appointment for employee's absence" **
@@ -186,7 +167,11 @@ class EmployeeHttpApiRoutes[
       (eid: EmployeeId, aid: AbsenceId) =>
         val r = for {
           employee <- EmployeeRepo.get(eid)
-          absence  <- AbsenceRepo.get(eid, aid)
+          employee <- employee match {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+          }
+          absence <- AbsenceRepo.get(aid)
           has <- {
             val searchFilter = SearchFilter(
               start = absence.from,
@@ -197,7 +182,7 @@ class EmployeeHttpApiRoutes[
           }
           _ <- ZIO.when(!has) {
             val absenceAppointment = AbsenceAppointment(
-              subject = s"Ухожу в отпуск ${employee.localizedName}",
+              subject = s"Ухожу в отпуск ${employee.localizedName.get}",
               description = "",
               startDate = absence.from,
               endDate = absence.from.plusDays(absence.daysQuantity),
@@ -207,23 +192,28 @@ class EmployeeHttpApiRoutes[
           }
         } yield has
 
-        r.fold(
-          {
-            case domainError.RepoRecordNotFound => NotFound("")
-            case domainError.RepoRecordBroken   => BadGateway("The employee record is broken, try to update")
-            case domainError.RepoNotAvailable   => BadGateway("Can't get the employee, because the service is not available")
-            case domainError.RepoUnknown        => InternalServerError("Probably a bug. Ask the administrator")
-          }, {
-            case false => Ok("")
-            case true  => Created("")
-          }
-        )
+        r.map {
+          case false => Ok("")
+          case true  => Created("")
+        }
     }
 
-    "Refreshes unprocessed items" **
+    "Add an item to the queue" **
+      "queue" @@
+        POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[AbsenceQueueItem] |>> { draft: AbsenceQueueItem =>
+      AbsenceQueue.add(List(draft)).as(Ok("Added"))
+    }
+
+    "Refreshes the queue" **
       "processing" @@
-        POST / "api" / "v0" / "processing" / "refreshUnprocessed" |>> {
-        ProcessingService.refreshUnprocessed.as(Ok(""))
+        POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
+      ProcessingService.refreshQueue.as(Ok(""))
+    }
+
+    "Process items in the queue" **
+      "processing" @@
+        POST / "api" / "v0" / "processing" / "process" |>> {
+      ProcessingService.process.as(Ok("Processed"))
     }
   }
 

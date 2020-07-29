@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra
 
 import cats.instances.list._
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.{MigrationRepo, AbsenceQueueItem, AbsenceQueueRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.domain.{MigrationRepo, AbsenceQueueItem, AbsenceQueue}
 import doobie.implicits._
 import doobie.util.update.Update
 import io.github.gaelrenoux.tranzactio.doobie.{Database, tzio}
@@ -16,19 +16,19 @@ done BOOLEAN NOT NULL,
 claimSent BOOLEAN NOT NULL,
 appointmentCreated BOOLEAN NOT NULL,
 retries INT NOT NULL
-);
-CREATE INDEX idx_AbsenceQueue_done ON AbsenceQueue (done);"""
+)""",
+    sql"""CREATE INDEX idx_AbsenceQueue_done ON AbsenceQueue (done)"""
   )
 
-  val live = ZLayer.fromServicesM[MigrationRepo.Service, Database.Service, Any, Throwable, AbsenceQueueRepo.Service] {
+  val live = ZLayer.fromServicesM[MigrationRepo.Service, Database.Service, Any, Throwable, AbsenceQueue.Service] {
     (migrateRepo, database) =>
       migrateRepo
         .migrate("DbAbsenceQueueRepo", migrations)
-        .as(new AbsenceQueueRepo.Service {
-          override def get(num: Int): Task[List[AbsenceQueueItem]] = database.transactionOrDie {
+        .as(new AbsenceQueue.Service {
+          override def getUncompleted(num: Int): Task[List[AbsenceQueueItem]] = database.transactionOrDie {
             tzio(sql"""SELECT 
 absenceId, done, claimSent, appointmentCreated, retries
-FROM LastKnownAbsence WHERE done = TRUE ORDER BY absenceId LIMIT $num
+FROM AbsenceQueue WHERE done = FALSE ORDER BY absenceId LIMIT $num
 """.query[AbsenceQueueItem].to[List])
           }
 
@@ -51,7 +51,7 @@ VALUES($absenceId, $done, $claimSent, $appointmentCreated, $retries)
           override def last: Task[Option[AbsenceQueueItem]] = database.transactionOrDie {
             tzio(sql"""SELECT
 absenceId, done, claimSent, appointmentCreated, retries
-FROM LastKnownAbsence WHERE done = TRUE ORDER BY absenceId DESC LIMIT 1
+FROM AbsenceQueue WHERE done = TRUE ORDER BY absenceId DESC LIMIT 1
 """.query[AbsenceQueueItem].option)
           }
         })

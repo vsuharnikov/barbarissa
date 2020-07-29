@@ -10,7 +10,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRou
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection, SqliteDataSource}
 import com.typesafe.config.ConfigFactory
 import io.github.gaelrenoux.tranzactio.doobie.Database
@@ -48,7 +48,8 @@ object BarbarissaMain extends App {
                            msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
-                           sqlite: SqliteDataSource.Config)
+                           sqlite: SqliteDataSource.Config,
+                           processing: ProcessingService.Config)
   case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
@@ -69,6 +70,7 @@ object BarbarissaMain extends App {
     with ReportService
     with AbsenceAppointmentService
     with ProcessingService
+    with AbsenceQueue
 
   private type AppTask[A] = RIO[AppEnvironment, A]
 
@@ -121,19 +123,25 @@ object BarbarissaMain extends App {
 
     val migrationRepoLayer = databaseLayer >>> DbMigrationRepo.live
 
-    val absenceQueueRepo = databaseLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
+    val absenceQueueLayer = databaseLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
 
     val reportServiceLayer = DocxReportService.live
 
-    val processingServiceLayer = absenceRepoLayer ++ absenceReasonRepoLayer ++
-      absenceQueueRepo ++ absenceAppointmentServiceLayer ++ reportServiceLayer >>>
-      ProcessingService.live
+    val mailServiceLayer = Blocking.live ++ msExchangeServiceLayer >>> MailService.live
+
+    val processingServiceLayer = configLayer.narrow(_.barbarissa.backend.processing) ++ employeeRepoLayer ++
+      absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
+      reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
+
+    val routesLayer = configLayer.narrow(_.barbarissa.backend.routes) ++ employeeRepoLayer ++ absenceRepoLayer ++
+      absenceReasonRepoLayer ++ absenceQueueLayer ++ reportServiceLayer ++ absenceAppointmentServiceLayer ++
+      processingServiceLayer
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++
-        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeRepoLayer ++ absenceRepoLayer ++
+        employeeRepoLayer ++ absenceRepoLayer ++
         absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ reportServiceLayer ++ migrationRepoLayer ++
-        processingServiceLayer
+        processingServiceLayer ++ routesLayer
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
@@ -170,10 +178,12 @@ object BarbarissaMain extends App {
           Tag(name = "employee"),
           Tag(name = "absence"),
           Tag(name = "appointment"),
+          Tag(name = "queue"),
           Tag(name = "processing"),
         )
       )
 
+      // TODO appenvironment layer? huh
       val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(middleware)).orNotFound
 
       val restApiConfig = rts.environment.get[HttpApiConfig]

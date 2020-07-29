@@ -5,22 +5,19 @@ import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.MsExchangeService
-import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
-import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
 import microsoft.exchange.webservices.data.core.service.item.{Appointment, Item}
 import microsoft.exchange.webservices.data.core.service.schema.{AppointmentSchema, FolderSchema}
 import microsoft.exchange.webservices.data.core.{ExchangeService, PropertySet}
-import microsoft.exchange.webservices.data.credential.WebCredentials
 import microsoft.exchange.webservices.data.property.complex.MessageBody
 import microsoft.exchange.webservices.data.property.complex.time.OlsonTimeZoneDefinition
 import microsoft.exchange.webservices.data.property.definition.ExtendedPropertyDefinition
 import microsoft.exchange.webservices.data.search.filter.SearchFilter
 import microsoft.exchange.webservices.data.search.filter.SearchFilter.SearchFilterCollection
 import microsoft.exchange.webservices.data.search.{FindItemsResults, FolderView, ItemView}
-import zio.{Has, Task, ZIO, ZLayer}
+import zio.{Task, ZLayer}
 
 import scala.jdk.CollectionConverters._
 
@@ -44,55 +41,59 @@ object MsExchangeAbsenceAppointmentService {
         private val getPropertySet     = new PropertySet(BasePropertySet.FirstClassProperties, jiraTaskKeyPropDef)
 
         override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
-          has(toView(filter, config.searchPageSize), filter.serviceMark)
+          has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
 
         override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
-          get(toView(filter, config.searchPageSize), filter.serviceMark).map(_.map(toAbsenceAppointment))
+          get(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).map(_.map(toAbsenceAppointment))
 
         override def add(appointment: AbsenceAppointment): Task[Unit] =
           Task(toAppointment(appointment).save(calendarFolder.getId))
 
-        private def has(view: ItemView, jiraTaskValue: String): Task[Boolean] =
+        private def has(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
           for {
-            items  <- Task.effect(calendarFolder.findItems(view))
+            items  <- Task.effect(calendarFolder.findItems(searchFilter, view))
             hasNow <- Task.effect(hasIn(items, jiraTaskValue))
             has <- if (hasNow || !items.isMoreAvailable) Task(hasNow)
             else {
-              view.setOffset(items.getNextPageOffset)
-              has(view, jiraTaskValue)
+              view.setOffset(items.getNextPageOffset) // TODO make more explicit
+              has(view, searchFilter, jiraTaskValue)
             }
           } yield has
 
-        private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean = {
-          service.loadPropertiesForItems(items, hasPropertySet)
-          items.asScala.exists { appointment =>
-            appointment.getExtendedProperties.asScala.exists { property =>
-              property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+        private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean =
+          if (items.getItems.isEmpty) false
+          else {
+            service.loadPropertiesForItems(items, hasPropertySet)
+            items.asScala.exists { appointment =>
+              appointment.getExtendedProperties.asScala.exists { property =>
+                property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+              }
             }
           }
-        }
 
-        private def get(view: ItemView, jiraTaskValue: String): Task[Option[Appointment]] =
+        private def get(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Option[Appointment]] =
           for {
-            items          <- Task.effect(calendarFolder.findItems(view))
+            items          <- Task.effect(calendarFolder.findItems(searchFilter, view))
             appointmentNow <- Task.effect(getIn(items, jiraTaskValue))
             appointment <- if (appointmentNow.isDefined || !items.isMoreAvailable) Task(appointmentNow)
             else {
               view.setOffset(items.getNextPageOffset)
-              get(view, jiraTaskValue)
+              get(view, searchFilter, jiraTaskValue)
             }
           } yield appointment
 
-        private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] = {
-          service.loadPropertiesForItems(items, getPropertySet)
-          items.asScala
-            .find { item =>
-              item.getExtendedProperties.asScala.exists { property =>
-                property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+        private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] =
+          if (items.getItems.isEmpty) None
+          else {
+            service.loadPropertiesForItems(items, getPropertySet)
+            items.asScala
+              .find { item =>
+                item.getExtendedProperties.asScala.exists { property =>
+                  property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+                }
               }
-            }
-            .collect { case appointment: Appointment => appointment }
-        }
+              .collect { case appointment: Appointment => appointment }
+          }
 
         private def toAppointment(appointment: AbsenceAppointment): Appointment = {
           val r = new Appointment(service)
@@ -129,19 +130,20 @@ object MsExchangeAbsenceAppointmentService {
             .getOrElse("") // Impossible
         )
 
-        private def toView(filter: AbsenceAppointmentService.SearchFilter, searchPageSize: Int): ItemView =
-          MsExchangeAbsenceAppointmentService.toView(filter, searchPageSize, config.zoneId)
+        private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter): SearchFilter =
+          MsExchangeAbsenceAppointmentService.toSearchFilter(filter, config.zoneId)
 
         private def toDate(x: LocalDate): Date = MsExchangeAbsenceAppointmentService.toDate(x, config.zoneId)
       }
   }
 
-  private def toView(filter: AbsenceAppointmentService.SearchFilter, searchPageSize: Int, zoneId: ZoneId): ItemView = {
-    val itemView               = new ItemView(searchPageSize, 0)
-    val searchFilterCollection = new SearchFilterCollection(LogicalOperator.And)
-    searchFilterCollection.add(new SearchFilter.IsGreaterThanOrEqualTo(AppointmentSchema.Start, toDate(filter.start, zoneId)))
-    searchFilterCollection.add(new SearchFilter.IsLessThanOrEqualTo(AppointmentSchema.End, toDate(filter.end, zoneId)))
-    itemView
+  private def toView(searchPageSize: Int): ItemView = new ItemView(searchPageSize, 0)
+
+  private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter, zoneId: ZoneId): SearchFilter = {
+    val r = new SearchFilterCollection(LogicalOperator.And)
+    r.add(new SearchFilter.IsGreaterThanOrEqualTo(AppointmentSchema.Start, toDate(filter.start, zoneId)))
+    r.add(new SearchFilter.IsLessThanOrEqualTo(AppointmentSchema.End, toDate(filter.end, zoneId)))
+    r
   }
 
   private def toDate(x: LocalDate, zoneId: ZoneId): Date = Date.from(x.atStartOfDay(zoneId).toInstant)

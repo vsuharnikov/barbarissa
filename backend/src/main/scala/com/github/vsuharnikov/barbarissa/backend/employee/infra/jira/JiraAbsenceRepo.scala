@@ -32,7 +32,7 @@ object JiraAbsenceRepo {
 
       private val nonEmptyFragment = """"Absence reason" IS NOT EMPTY AND "Start Date" IS NOT EMPTY AND "Quantiny (days)" IS NOT EMPTY"""
 
-      override def getByCursor(cursor: GetCursor): ZIO[Any, error.RepoError, (List[Absence], Option[GetCursor])] =
+      override def getByCursor(cursor: GetCursor): Task[(List[Absence], Option[GetCursor])] =
         get(
           JiraSearchRequest(
             jql = s"""reporter=${cursor.by.asString} AND project="HR Services" AND type=Absence AND $nonEmptyFragment ORDER BY key DESC""",
@@ -46,7 +46,7 @@ object JiraAbsenceRepo {
           )
         }
 
-      override def get(by: employee.EmployeeId, absenceId: AbsenceId): ZIO[Any, error.RepoError, Absence] =
+      override def get(absenceId: AbsenceId): Task[Absence] =
         get(
           JiraSearchRequest(
             jql = s"""key=${absenceId.asString}""",
@@ -57,7 +57,7 @@ object JiraAbsenceRepo {
           resp.issues.headOption.map(absenceFrom).get // TODO
         }
 
-      override def getFromByCursor(cursor: GetAfterCursor): ZIO[Any, error.RepoError, (List[Absence], Option[GetAfterCursor])] = {
+      override def getFromByCursor(cursor: GetAfterCursor): Task[(List[Absence], Option[GetAfterCursor])] = {
         val absenceIdFragment = cursor.from.fold("")(x => s"AND type=Absence AND key > ${x.asString}")
         get(
           JiraSearchRequest(
@@ -73,12 +73,12 @@ object JiraAbsenceRepo {
         }
       }
 
-      private def get[T](req: JiraSearchRequest)(f: JiraSearchResult => T): ZIO[Any, error.RepoError, T] = {
+      private def get[T](req: JiraSearchRequest)(f: JiraSearchResult => T): Task[T] = {
         val httpReq = Request[Task](POST, searchAbsenceUri, headers = commonHeaders).withEntity(req)
         run(httpReq)(_.as[JiraSearchResult]).map(f)
       }
 
-      private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): ZIO[Any, error.RepoError, T] =
+      private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[T] =
         client
           .run(req)
           .use {
@@ -93,10 +93,10 @@ object JiraAbsenceRepo {
             case Status.ServerError(_) => Task.fail(ForwardError(error.RepoNotAvailable))
             case _                     => Task.fail(ForwardError(error.RepoUnknown))
           }
-          .catchAll {
-            case ForwardError(error) => ZIO.fail(error)
-            case _                   => ZIO.fail(error.RepoUnknown)
-          }
+//          .catchAll {
+//            case ForwardError(error) => ZIO.fail(error)
+//            case _                   => ZIO.fail(error.RepoUnknown)
+//          }
 
       def nextCursor(resp: JiraSearchResult): Option[(Int, Int)] = {
         val retrieved = resp.startAt + resp.issues.size

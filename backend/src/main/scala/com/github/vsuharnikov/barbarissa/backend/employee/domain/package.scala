@@ -8,7 +8,7 @@ package object domain {
   type EmployeeRepo              = Has[EmployeeRepo.Service]
   type AbsenceReasonRepo         = Has[AbsenceReasonRepo.Service]
   type MigrationRepo             = Has[MigrationRepo.Service]
-  type AbsenceQueueRepo          = Has[AbsenceQueueRepo.Service]
+  type AbsenceQueue              = Has[AbsenceQueue.Service]
   type AbsenceAppointmentService = Has[AbsenceAppointmentService.Service]
 
   implicit val circeConfig: Configuration = Configuration.default

@@ -16,6 +16,9 @@
     <!-- HTTP -->
     <logger name="org.http4s" level="INFO"/>
 
+    <!-- DOCX -->
+    <logger name="com.deepoove.poi.resolver" level="WARN"/>
+
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <target>System.out</target>
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">

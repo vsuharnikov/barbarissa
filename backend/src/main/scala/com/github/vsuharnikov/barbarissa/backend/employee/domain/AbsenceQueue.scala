@@ -4,9 +4,9 @@ import zio.Task
 import zio.macros.accessible
 
 @accessible
-object AbsenceQueueRepo {
+object AbsenceQueue {
   trait Service {
-    def get(num: Int): Task[List[AbsenceQueueItem]]
+    def getUncompleted(num: Int): Task[List[AbsenceQueueItem]]
     def add(drafts: List[AbsenceQueueItem]): Task[Unit]
     def update(draft: AbsenceQueueItem): Task[Unit]
     def last: Task[Option[AbsenceQueueItem]]

@@ -4,6 +4,7 @@ import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.MsExchangeService
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
 import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
 import microsoft.exchange.webservices.data.core.enumeration.property._
@@ -24,8 +25,7 @@ import zio.{Has, Task, ZIO, ZLayer}
 import scala.jdk.CollectionConverters._
 
 object MsExchangeAbsenceAppointmentService {
-  case class CredentialsConfig(username: String, password: String)
-  case class Config(credentials: CredentialsConfig, searchPageSize: Int, zoneId: ZoneId)
+  case class Config(searchPageSize: Int, zoneId: ZoneId)
 
   private val jiraTaskKeyPropDef = new ExtendedPropertyDefinition(
     DefaultExtendedPropertySet.PublicStrings,
@@ -33,21 +33,9 @@ object MsExchangeAbsenceAppointmentService {
     MapiPropertyType.String
   )
 
-  val live = ZLayer.fromFunctionM[Has[Config], Throwable, AbsenceAppointmentService.Service] { env =>
-    val config = env.get[Config]
+  val live = ZLayer.fromServicesM[Config, MsExchangeService.Service, Any, Throwable, AbsenceAppointmentService.Service] { (config, service) =>
     for {
-      service <- ZIO
-        .effect {
-          val service = new ExchangeService(ExchangeVersion.Exchange2010_SP2)
-          //service.setTraceEnabled(true)
-          //service.setTraceFlags(java.util.EnumSet.allOf(classOf[TraceFlags]))
-          //service.setTraceListener((traceType: String, traceMessage: String) => println(s"==> type: $traceType, traceMessage: $traceMessage"))
-
-          val credentials = new WebCredentials(config.credentials.username, config.credentials.password)
-          service.setCredentials(credentials)
-          service.autodiscoverUrl(config.credentials.username, new RedirectionUrlCallback)
-          service
-        }
+      service        <- service.get
       calendarFolder <- findCalendarFolder(service)
     } yield
       new AbsenceAppointmentService.Service {
@@ -179,10 +167,5 @@ object MsExchangeAbsenceAppointmentService {
         case folder: CalendarFolder => folder
         case folder                 => throw new RuntimeException(s"Found a non-calendar folder: ${folder.getClass.getName}. Ask a programmer.")
       }
-  }
-
-  private class RedirectionUrlCallback extends IAutodiscoverRedirectionUrl {
-    override def autodiscoverRedirectionUrlValidationCallback(redirectionUrl: String): Boolean =
-      redirectionUrl.toLowerCase.startsWith("https://")
   }
 }

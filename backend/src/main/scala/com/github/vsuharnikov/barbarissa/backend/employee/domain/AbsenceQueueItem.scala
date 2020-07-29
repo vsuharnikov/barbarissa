@@ -2,4 +2,4 @@ package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
 import com.github.vsuharnikov.barbarissa.backend.employee.AbsenceId
 
-case class UnprocessedAbsence(absenceId: AbsenceId, done: Boolean, hasClaim: Boolean, hasAppointment: Boolean, retries: Int)
+case class AbsenceQueueItem(absenceId: AbsenceId, done: Boolean, claimSent: Boolean, appointmentCreated: Boolean, retries: Int)

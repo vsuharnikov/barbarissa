@@ -30,10 +30,12 @@ object JiraAbsenceRepo {
         "customfield_10438" // "Quantiny (days)"
       )
 
+      private val nonEmptyFragment = """"Absence reason" IS NOT EMPTY AND "Start Date" IS NOT EMPTY AND "Quantiny (days)" IS NOT EMPTY"""
+
       override def getByCursor(cursor: GetCursor): ZIO[Any, error.RepoError, (List[Absence], Option[GetCursor])] =
         get(
           JiraSearchRequest(
-            jql = s"""reporter=${cursor.by.asString} AND project="HR Services" AND type=Absence AND "Absence reason" is not EMPTY ORDER BY key DESC""",
+            jql = s"""reporter=${cursor.by.asString} AND project="HR Services" AND type=Absence AND $nonEmptyFragment ORDER BY key DESC""",
             startAt = cursor.startAt,
             maxResults = cursor.maxResults,
             searchRequestFields
@@ -59,7 +61,7 @@ object JiraAbsenceRepo {
         val absenceIdFragment = cursor.from.fold("")(x => s"AND type=Absence AND key > ${x.asString}")
         get(
           JiraSearchRequest(
-            jql = s"""project="HR Services" $absenceIdFragment AND "Absence reason" IS NOT EMPTY ORDER BY key""",
+            jql = s"""project="HR Services" $absenceIdFragment AND $nonEmptyFragment ORDER BY key""",
             startAt = cursor.startAt,
             maxResults = cursor.maxResults,
             searchRequestFields

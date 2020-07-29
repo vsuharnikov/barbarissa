@@ -11,7 +11,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection, SqliteDataSource}
 import com.typesafe.config.ConfigFactory
 import io.github.gaelrenoux.tranzactio.doobie.Database
 import org.http4s.client.Client
@@ -44,7 +44,8 @@ object BarbarissaMain extends App {
   case class BarbarissaConfig(backend: BackendConfig)
   case class BackendConfig(httpApi: HttpApiConfig,
                            jira: JiraEmployeeRepo.Config,
-                           msExchange: MsExchangeAbsenceAppointmentService.Config,
+                           msExchange: MsExchangeService.Config,
+                           msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
                            sqlite: SqliteDataSource.Config)
@@ -102,31 +103,36 @@ object BarbarissaMain extends App {
 
     val httpClientLayer = httpClient.map(Logger[Task](logBody = true, logHeaders = true)(_)).toLayer
 
-    val employeeJiraRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live
+    val employeeRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live
 
-    val absenceJiraRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraAbsenceRepo.live
+    val absenceRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraAbsenceRepo.live
 
-    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) >>> MsExchangeAbsenceAppointmentService.live
+    val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live >>> MsExchangeService.live
+
+    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++
+      msExchangeServiceLayer >>>
+      MsExchangeAbsenceAppointmentService.live
 
     val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
 
-    val dataSourceLayer = Blocking.live ++ configLayer.narrow(_.barbarissa.backend.sqlite) >>> SqliteDataSource.live
+    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live >>> SqliteDataSource.live
 
-    val databaseLayer = Blocking.live ++ Clock.live ++ dataSourceLayer >>> Database.fromDatasource
+    val databaseLayer = dataSourceLayer ++ Blocking.live ++ Clock.live >>> Database.fromDatasource
 
     val migrationRepoLayer = databaseLayer >>> DbMigrationRepo.live
 
-    val lastKnownAbsenceRepoLayer = databaseLayer ++ migrationRepoLayer >>> DbLastKnownAbsenceRepo.live
+    val absenceQueueRepo = databaseLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
 
-    // lastKnownAbsenceRepoLayer to make dependency. Without this we will get the "database is locked" error
-    val unprocessedAbsenceRepo = databaseLayer ++ migrationRepoLayer ++ lastKnownAbsenceRepoLayer >>> DbUnprocessedAbsenceRepo.live
+    val reportServiceLayer = DocxReportService.live
 
-    val processingServiceLayer = lastKnownAbsenceRepoLayer ++ absenceJiraRepoLayer ++ absenceReasonRepoLayer ++ unprocessedAbsenceRepo >>> ProcessingService.live
+    val processingServiceLayer = absenceRepoLayer ++ absenceReasonRepoLayer ++
+      absenceQueueRepo ++ absenceAppointmentServiceLayer ++ reportServiceLayer >>>
+      ProcessingService.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++
-        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeJiraRepoLayer ++ absenceJiraRepoLayer ++
-        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ DocxReportService.live ++ migrationRepoLayer ++
+        configLayer.narrow(_.barbarissa.backend.routes) ++ employeeRepoLayer ++ absenceRepoLayer ++
+        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ reportServiceLayer ++ migrationRepoLayer ++
         processingServiceLayer
 
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {

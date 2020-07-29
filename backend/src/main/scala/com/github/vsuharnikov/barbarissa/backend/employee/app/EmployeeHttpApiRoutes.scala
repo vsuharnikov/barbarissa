@@ -10,6 +10,7 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.{HttpSearchCursor, JsonSupport, ListResponse, RoutesParsers}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}

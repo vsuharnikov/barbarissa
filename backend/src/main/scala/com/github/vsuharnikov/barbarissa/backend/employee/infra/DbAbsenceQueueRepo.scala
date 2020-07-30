@@ -3,7 +3,7 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra
 import cats.instances.list._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo.Migrations
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceQueue, AbsenceQueueItem, MigrationRepo}
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
 import doobie.implicits._
 import doobie.util.update.Update
 import zio.interop.catz._
@@ -21,9 +21,9 @@ retries INT NOT NULL
     sql"""CREATE INDEX idx_AbsenceQueue_done ON AbsenceQueue (done)"""
   ).map(_.update.run.map(_ => ()))
 
-  val live: ZLayer[DbTransactor with MigrationRepo, Throwable, Has[AbsenceQueue.Service]] = ZIO
-    .accessM[DbTransactor with MigrationRepo] { env =>
-      val tr          = env.get[DbTransactor.Service].transactor
+  val live: ZLayer[Has[TransactorIO] with MigrationRepo, Throwable, Has[AbsenceQueue.Service]] = ZIO
+    .accessM[Has[TransactorIO] with MigrationRepo] { env =>
+      val tr          = env.get[TransactorIO]
       val migrateRepo = env.get[MigrationRepo.Service]
 
       migrateRepo

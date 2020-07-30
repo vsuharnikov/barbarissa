@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.shared.domain
 
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.MsExchangeService
+import microsoft.exchange.webservices.data.core.ExchangeService
 import microsoft.exchange.webservices.data.core.service.item.EmailMessage
 import microsoft.exchange.webservices.data.property.complex.MessageBody
 import zio.blocking.Blocking
@@ -19,8 +19,8 @@ object MailService {
 
   // TODO Retries
   // TODO Separate file
-  val live = ZLayer.fromServicesM[Blocking.Service, MsExchangeService.Service, Any, Throwable, Service] { (blocking, msExchange) =>
-    msExchange.get.map { service =>
+  val live: ZLayer[Blocking with Has[ExchangeService], Nothing, Has[Service]] =
+    ZLayer.fromServices[Blocking.Service, ExchangeService, Service] { (blocking, service) =>
       new Service {
         override def send(to: EmailAddress, subject: String, bodyText: String, attachments: Map[FileName, FileContent]): Task[Unit] =
           blocking
@@ -38,5 +38,4 @@ object MailService {
             .provide(Has(blocking))
       }
     }
-  }
 }

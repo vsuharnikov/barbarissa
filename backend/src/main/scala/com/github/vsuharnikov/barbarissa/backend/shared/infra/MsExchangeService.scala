@@ -5,20 +5,14 @@ import microsoft.exchange.webservices.data.core.ExchangeService
 import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
 import microsoft.exchange.webservices.data.credential.WebCredentials
 import zio.blocking.Blocking
-import zio.macros.accessible
-import zio.{UIO, ZIO, ZLayer}
+import zio.{ZIO, ZLayer}
 
-@accessible
 object MsExchangeService {
   case class CredentialsConfig(username: String, password: String)
   case class Config(credentials: CredentialsConfig)
 
-  trait Service {
-    def get: UIO[ExchangeService]
-  }
-
   // TODO laziness
-  val live = ZLayer.fromServicesM[Config, Blocking.Service, Any, Throwable, Service] { (config, blocking) =>
+  val live = ZLayer.fromServicesM[Config, Blocking.Service, Any, Throwable, ExchangeService] { (config, blocking) =>
     blocking
       .blocking {
         ZIO.effect {
@@ -31,11 +25,6 @@ object MsExchangeService {
           service.setCredentials(credentials)
           service.autodiscoverUrl(config.credentials.username, new RedirectionUrlCallback)
           service
-        }
-      }
-      .map { service =>
-        new Service {
-          override def get: UIO[ExchangeService] = UIO.succeed(service)
         }
       }
   }

@@ -4,7 +4,6 @@ import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.MsExchangeService
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
@@ -30,9 +29,8 @@ object MsExchangeAbsenceAppointmentService {
     MapiPropertyType.String
   )
 
-  val live = ZLayer.fromServicesM[Config, MsExchangeService.Service, Any, Throwable, AbsenceAppointmentService.Service] { (config, service) =>
+  val live = ZLayer.fromServicesM[Config, ExchangeService, Any, Throwable, AbsenceAppointmentService.Service] { (config, service) =>
     for {
-      service        <- service.get
       calendarFolder <- findCalendarFolder(service)
     } yield
       new AbsenceAppointmentService.Service {

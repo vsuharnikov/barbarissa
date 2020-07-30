@@ -1,6 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.apply._
+import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData}
 import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
@@ -14,8 +15,7 @@ import org.http4s.client.Client
 import org.http4s.headers.{Authorization, `Content-Type`}
 import org.http4s.syntax.all._
 import zio.interop.catz._
-import zio.{Task, ZIO, ZLayer}
-import cats.syntax.option._
+import zio.{Task, ZLayer}
 
 object JiraEmployeeRepo {
   case class Config(credentials: BasicCredentials) // TODO server
@@ -85,7 +85,7 @@ object JiraEmployeeRepo {
       companyId = extended.companyId.map(CompanyId),
       position = extended.position,
       sex = extended.sex.map {
-        case "male" => Sex.Male
+        case "male"   => Sex.Male
         case "female" => Sex.Female
       }
     )

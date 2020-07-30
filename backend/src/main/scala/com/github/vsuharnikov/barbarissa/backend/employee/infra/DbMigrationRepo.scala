@@ -4,7 +4,7 @@ import cats.syntax.applicative._
 import cats.syntax.apply._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo.Migrations
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
 import doobie.ConnectionIO
 import doobie.implicits._
 import zio.interop.catz._
@@ -27,9 +27,9 @@ version INTEGER NOT NULL
   def migrationsFromInclusiveTx(migrations: Migrations, version: Int) =
     migrations.drop(version).foldLeft(().pure[ConnectionIO])(_ *> _)
 
-  val live: ZLayer[DbTransactor, Throwable, Has[MigrationRepo.Service]] = ZIO
-    .accessM[DbTransactor] { env =>
-      val tr = env.get[DbTransactor.Service].transactor
+  val live: ZLayer[Has[TransactorIO], Throwable, Has[MigrationRepo.Service]] = ZIO
+    .accessM[Has[TransactorIO]] { env =>
+      val tr = env.get[TransactorIO]
 
       def internalMigrate(module: String, allMigrations: Migrations) =
         for {

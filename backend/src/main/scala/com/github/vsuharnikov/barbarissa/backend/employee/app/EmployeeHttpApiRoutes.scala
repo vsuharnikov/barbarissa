@@ -77,7 +77,7 @@ class EmployeeHttpApiRoutes[
       (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
         for {
           absences       <- AbsenceRepo.getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
-          absenceReasons <- AbsenceReasonRepo.all.mapError(ForwardError)
+          absenceReasons <- AbsenceReasonRepo.all
           r <- {
             val (as, nextCursor) = absences
             val ps               = as.map(a => (a, absenceReasons(a.reasonId))) // TODO
@@ -98,7 +98,10 @@ class EmployeeHttpApiRoutes[
           case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
           case Some(x) => ZIO.succeed(x)
         }
-        absenceReason <- AbsenceReasonRepo.get(absence.reasonId).mapError(ForwardError)
+        absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
+          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+          case Some(x) => ZIO.succeed(x)
+        }
         r             <- Ok(httpAbsenceFrom(absence, absenceReason))
       } yield r
     }

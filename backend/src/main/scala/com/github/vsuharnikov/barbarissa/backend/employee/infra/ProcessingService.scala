@@ -99,7 +99,10 @@ object ProcessingService {
 
       private def sendClaim(employee: Employee, absence: Absence): Task[Unit] = {
         val r = for {
-          absenceReason <- AbsenceReasonRepo.get(absence.reasonId).mapError(ForwardError)
+          absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
+          }
           absenceReasonSuffix <- absenceReason.needClaim match {
             case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
             case Some(AbsenceClaimType.WithCompensation)    => ZIO.succeed("with-compensation")
@@ -157,7 +160,7 @@ object ProcessingService {
       private def paginatedLoop(cursor: GetAfterCursor): Task[Unit] =
         for {
           r          <- absenceRepo.getFromByCursor(cursor)
-          reasonsMap <- reasonRepo.all.mapError(ForwardError)
+          reasonsMap <- reasonRepo.all
           _ <- {
             val (unprocessed, nextCursor) = r
             val xs = unprocessed.view.map { a =>

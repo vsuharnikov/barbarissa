@@ -2,9 +2,8 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra
 
 import com.github.vsuharnikov.barbarissa.backend.employee.AbsenceReasonId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceReason, AbsenceReasonRepo}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
 import zio.config.magnolia.DeriveConfigDescriptor.Descriptor
-import zio.{ZIO, ZLayer}
+import zio.{Task, ZIO, ZLayer}
 
 object ConfigurableAbsenceReasonRepo {
   case class Config(xs: List[AbsenceReason]) {
@@ -17,13 +16,8 @@ object ConfigurableAbsenceReasonRepo {
 
   val live = ZLayer.fromService[Config, AbsenceReasonRepo.Service] { config =>
     new AbsenceReasonRepo.Service {
-      override def get(by: AbsenceReasonId): ZIO[Any, error.RepoError, AbsenceReason] =
-        config.reasons.get(by) match {
-          case Some(value) => ZIO.succeed(value)
-          case None        => ZIO.fail(error.RepoRecordNotFound)
-        }
-
-      override def all: ZIO[Any, error.RepoError, Map[AbsenceReasonId, AbsenceReason]] = ZIO.succeed(config.reasons)
+      override def get(by: AbsenceReasonId): Task[Option[AbsenceReason]] = ZIO.succeed(config.reasons.get(by))
+      override def all: Task[Map[AbsenceReasonId, AbsenceReason]]        = ZIO.succeed(config.reasons)
     }
   }
 }

@@ -1,7 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error
 import io.circe.generic.JsonCodec
 import zio.{Task, ZIO}
 

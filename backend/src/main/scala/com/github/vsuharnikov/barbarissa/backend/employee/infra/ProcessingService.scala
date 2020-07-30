@@ -64,9 +64,11 @@ object ProcessingService {
         ZIO
           .when(!x.done) {
             for {
-              absence  <- AbsenceRepo.get(x.absenceId)
-              employee <- EmployeeRepo.get(absence.employeeId)
-              employee <- employee match {
+              absence <- AbsenceRepo.get(x.absenceId).flatMap {
+                case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
+                case Some(x) => ZIO.succeed(x)
+              }
+              employee <- EmployeeRepo.get(absence.employeeId).flatMap {
                 case Some(x) => ZIO.succeed(x)
                 case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
               }
@@ -97,7 +99,7 @@ object ProcessingService {
 
       private def sendClaim(employee: Employee, absence: Absence): Task[Unit] = {
         val r = for {
-          absenceReason <- AbsenceReasonRepo.get(absence.reason.id).mapError(ForwardError)
+          absenceReason <- AbsenceReasonRepo.get(absence.reasonId).mapError(ForwardError)
           absenceReasonSuffix <- absenceReason.needClaim match {
             case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
             case Some(AbsenceClaimType.WithCompensation)    => ZIO.succeed("with-compensation")
@@ -133,7 +135,7 @@ object ProcessingService {
             val searchFilter = SearchFilter(
               start = absence.from,
               end = absence.from.plusDays(absence.daysQuantity),
-              serviceMark = absence.id.asString
+              serviceMark = absence.absenceId.asString
             )
             AbsenceAppointmentService.has(searchFilter)
           }
@@ -143,7 +145,7 @@ object ProcessingService {
               description = "",
               startDate = absence.from,
               endDate = absence.from.plusDays(absence.daysQuantity),
-              serviceMark = absence.id.asString
+              serviceMark = absence.absenceId.asString
             )
             AbsenceAppointmentService.add(absenceAppointment)
           }
@@ -159,12 +161,12 @@ object ProcessingService {
           _ <- {
             val (unprocessed, nextCursor) = r
             val xs = unprocessed.view.map { a =>
-              toUnprocessed(a, reasonsMap(a.reason.id)) // TODO
+              toUnprocessed(a, reasonsMap(a.reasonId)) // TODO
             }.toList
 
             if (xs.isEmpty) Task.unit
             else {
-              val draftLastKnown = unprocessed.last.id
+              val draftLastKnown = unprocessed.last.absenceId
               queueRepo.add(xs) *> Task.foreach(nextCursor)(paginatedLoop)
             }
           }
@@ -173,7 +175,7 @@ object ProcessingService {
   }
 
   def toUnprocessed(a: Absence, ar: AbsenceReason): AbsenceQueueItem = AbsenceQueueItem(
-    absenceId = a.id,
+    absenceId = a.absenceId,
     done = false,
     claimSent = ar.needClaim.fold(true)(_ => false),
     appointmentCreated = ar.needAppointment.fold(true)(!_),

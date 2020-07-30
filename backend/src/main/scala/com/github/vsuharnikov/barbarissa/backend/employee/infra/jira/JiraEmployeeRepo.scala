@@ -25,7 +25,7 @@ object JiraEmployeeRepo {
       private val commonHeaders = Headers.of(Authorization(BasicCredentials(config.credentials.username, config.credentials.password)))
 
       override def update(draft: Employee): Task[Unit] = {
-        val uri = extendedDataUri(draft.id.asString)
+        val uri = extendedDataUri(draft.employeeId.asString)
         val req = Request[Task](PUT, uri, headers = commonHeaders)
           .withContentType(`Content-Type`(MediaType.application.json))
           .withEntity(
@@ -78,11 +78,11 @@ object JiraEmployeeRepo {
 
   private def toDomain(basic: Option[JiraBasicUserData], extended: JiraExtendedUserData): Option[Employee] = basic.map { basic =>
     Employee(
-      id = EmployeeId(basic.name),
+      employeeId = EmployeeId(basic.name),
       name = basic.displayName,
       localizedName = extended.localizedName,
       email = basic.emailAddress,
-      companyId = extended.companyId.map(CompanyId),
+      companyId = extended.companyId.map(CompanyId(_)),
       position = extended.position,
       sex = extended.sex.map {
         case "male"   => Sex.Male

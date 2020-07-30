@@ -1,7 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.{GetAfterCursor, GetCursor}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo.Config
@@ -16,7 +15,7 @@ import org.http4s.client.Client
 import org.http4s.headers.Authorization
 import org.http4s.syntax.all._
 import zio.interop.catz._
-import zio.{Task, ZIO, ZLayer}
+import zio.{Task, ZLayer}
 
 object JiraAbsenceRepo {
   val live = ZLayer.fromServices[Config, Client[Task], AbsenceRepo.Service] { (config, client) =>
@@ -46,7 +45,7 @@ object JiraAbsenceRepo {
           )
         }
 
-      override def get(absenceId: AbsenceId): Task[Absence] =
+      override def get(absenceId: AbsenceId): Task[Option[Absence]] =
         get(
           JiraSearchRequest(
             jql = s"""key=${absenceId.asString}""",
@@ -54,7 +53,7 @@ object JiraAbsenceRepo {
             maxResults = 1,
             searchRequestFields
           )) { resp =>
-          resp.issues.headOption.map(absenceFrom).get // TODO
+          resp.issues.headOption.map(absenceFrom)
         }
 
       override def getFromByCursor(cursor: GetAfterCursor): Task[(List[Absence], Option[GetAfterCursor])] = {
@@ -109,13 +108,10 @@ object JiraAbsenceRepo {
     uri"https://jira.wavesplatform.com/rest/api/2/search"
 
   def absenceFrom(jira: JiraSearchResultItem): Absence = Absence(
-    id = AbsenceId(jira.key),
+    absenceId = AbsenceId(jira.key),
     employeeId = EmployeeId(jira.fields.reporter.name),
     from = jira.fields.startDate,
     daysQuantity = jira.fields.daysQuantity.toInt,
-    reason = Absence.Reason(
-      id = AbsenceReasonId(jira.fields.absenceReason.id),
-      name = jira.fields.absenceReason.value
-    )
+    reasonId = AbsenceReasonId(jira.fields.absenceReason.id)
   )
 }

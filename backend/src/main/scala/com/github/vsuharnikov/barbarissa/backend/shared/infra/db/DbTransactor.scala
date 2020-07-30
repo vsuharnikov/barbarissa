@@ -16,12 +16,9 @@ object DbTransactor extends Serializable {
   val live = ZLayer.fromService[DataSource, TransactorIO] { ds =>
     val executor = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor())
 
-    Transactor
-      .fromDataSource[Task]
-      .apply(
-        dataSource = ds,
-        connectEC = executor,
-        blocker = Blocker.liftExecutionContext(executor)
-      )
+    Transactor.fromConnection[Task](
+      connection = ds.getConnection, // Only one connection for sqlite, https://stackoverflow.com/a/48480012
+      blocker = Blocker.liftExecutionContext(executor)
+    )
   }
 }

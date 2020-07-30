@@ -4,7 +4,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.Sex
 
 case class Employee(
-    id: EmployeeId,
+    employeeId: EmployeeId,
     name: String,
     email: String,
     localizedName: Option[String],

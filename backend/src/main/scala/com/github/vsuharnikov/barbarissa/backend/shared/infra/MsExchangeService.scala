@@ -2,7 +2,7 @@ package com.github.vsuharnikov.barbarissa.backend.shared.infra
 
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
 import microsoft.exchange.webservices.data.core.ExchangeService
-import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
+import microsoft.exchange.webservices.data.core.enumeration.misc.ExchangeVersion
 import microsoft.exchange.webservices.data.credential.WebCredentials
 import zio.blocking.Blocking
 import zio.{ZIO, ZLayer}
@@ -17,9 +17,10 @@ object MsExchangeService {
       .blocking {
         ZIO.effect {
           val service = new ExchangeService(ExchangeVersion.Exchange2010_SP2)
-          service.setTraceEnabled(true)
-          service.setTraceFlags(java.util.EnumSet.allOf(classOf[TraceFlags]))
-          service.setTraceListener((traceType: String, traceMessage: String) => println(s"==> type: $traceType, traceMessage: $traceMessage"))
+
+//          service.setTraceEnabled(true)
+//          service.setTraceFlags(java.util.EnumSet.allOf(classOf[TraceFlags]))
+//          service.setTraceListener((traceType: String, traceMessage: String) => println(s"==> type: $traceType, traceMessage: $traceMessage"))
 
           val credentials = new WebCredentials(config.credentials.username, config.credentials.password)
           service.setCredentials(credentials)

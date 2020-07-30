@@ -14,7 +14,7 @@ object AbsenceRepo extends Serializable {
     def getById(id: EmployeeId): RepoMultipleIO[Absence, GetCursor] = getByCursor(GetCursor(id, 0, 10))
     def getByCursor(cursor: GetCursor): RepoMultipleIO[Absence, GetCursor]
 
-    def get(absenceId: AbsenceId): Task[Absence]
+    def get(absenceId: AbsenceId): Task[Option[Absence]]
 
     def getFromById(id: Option[AbsenceId]): RepoMultipleIO[Absence, GetAfterCursor] = getFromByCursor(GetAfterCursor(id, 0, 10))
     def getFromByCursor(cursor: GetAfterCursor): RepoMultipleIO[Absence, GetAfterCursor]

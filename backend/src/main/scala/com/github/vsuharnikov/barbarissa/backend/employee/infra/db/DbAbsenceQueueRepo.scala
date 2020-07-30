@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
 
 import cats.instances.list._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo.Migrations
@@ -10,24 +10,13 @@ import zio.interop.catz._
 import zio.{Has, Task, ZIO, ZLayer}
 
 object DbAbsenceQueueRepo {
-  private val migrations: Migrations = List(
-    sql"""CREATE TABLE AbsenceQueue(
-absenceId VARCHAR(100) PRIMARY KEY NOT NULL,
-done BOOLEAN NOT NULL,
-claimSent BOOLEAN NOT NULL,
-appointmentCreated BOOLEAN NOT NULL,
-retries INT NOT NULL
-)""",
-    sql"""CREATE INDEX idx_AbsenceQueue_done ON AbsenceQueue (done)"""
-  ).map(_.update.run.map(_ => ()))
-
   val live: ZLayer[Has[TransactorIO] with MigrationRepo, Throwable, Has[AbsenceQueue.Service]] = ZIO
     .accessM[Has[TransactorIO] with MigrationRepo] { env =>
       val tr          = env.get[TransactorIO]
       val migrateRepo = env.get[MigrationRepo.Service]
 
       migrateRepo
-        .migrate("DbAbsenceQueueRepo", migrations)
+        .migrate("DbAbsenceQueueRepo", Sql.migrations)
         .as(new AbsenceQueue.Service {
           override def getUncompleted(num: Int): Task[List[AbsenceQueueItem]] = Sql.getUncompleted(num).transact(tr)
           override def add(drafts: List[AbsenceQueueItem]): Task[Unit]        = Sql.add.updateMany(drafts).transact(tr).unit
@@ -38,6 +27,17 @@ retries INT NOT NULL
     .toLayer
 
   object Sql {
+    val migrations: Migrations = List(
+      sql"""CREATE TABLE AbsenceQueue(
+absenceId VARCHAR(100) PRIMARY KEY NOT NULL,
+done BOOLEAN NOT NULL,
+claimSent BOOLEAN NOT NULL,
+appointmentCreated BOOLEAN NOT NULL,
+retries INT NOT NULL
+)""",
+      sql"""CREATE INDEX idx_AbsenceQueue_done ON AbsenceQueue (done)"""
+    ).map(_.update.run.map(_ => ()))
+
     def getUncompleted(num: Int) = sql"""SELECT
 absenceId, done, claimSent, appointmentCreated, retries
 FROM AbsenceQueue WHERE done = FALSE ORDER BY absenceId LIMIT $num

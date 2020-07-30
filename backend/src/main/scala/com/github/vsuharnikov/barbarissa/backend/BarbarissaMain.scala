@@ -9,6 +9,7 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
@@ -105,7 +106,15 @@ object BarbarissaMain extends App {
 
     val httpClientLayer = httpClient.map(Logger[Task](logBody = true, logHeaders = true)(_)).toLayer
 
-    val employeeRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live
+    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live >>> SqliteDataSource.live
+
+    val transactorLayer = dataSourceLayer >>> DbTransactor.live
+
+    val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
+
+    val employeeRepoLayer = transactorLayer ++ migrationRepoLayer ++
+      (configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live) >>>
+      DbCachedEmployeeRepo.live
 
     val absenceRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraAbsenceRepo.live
 
@@ -116,12 +125,6 @@ object BarbarissaMain extends App {
       MsExchangeAbsenceAppointmentService.live
 
     val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
-
-    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live >>> SqliteDataSource.live
-
-    val transactorLayer = dataSourceLayer >>> DbTransactor.live
-
-    val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
     val absenceQueueLayer = transactorLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
 

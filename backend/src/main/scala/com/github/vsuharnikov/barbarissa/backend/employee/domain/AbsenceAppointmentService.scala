@@ -6,8 +6,8 @@ import zio.Task
 import zio.macros.accessible
 
 @accessible
-object AbsenceAppointmentService {
-  trait Service {
+object AbsenceAppointmentService extends Serializable {
+  trait Service extends Serializable {
     def has(filter: SearchFilter): Task[Boolean]
     def get(filter: SearchFilter): Task[Option[AbsenceAppointment]]
     def add(appointment: AbsenceAppointment): Task[Unit]

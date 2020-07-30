@@ -5,8 +5,8 @@ import zio.Task
 import zio.macros.accessible
 
 @accessible
-object EmployeeRepo {
-  trait Service {
+object EmployeeRepo extends Serializable {
+  trait Service extends Serializable {
     def update(draft: Employee): Task[Unit]
     def get(by: EmployeeId): Task[Option[Employee]]
   }

@@ -4,8 +4,8 @@ import zio.Task
 import zio.macros.accessible
 
 @accessible
-object AbsenceQueue {
-  trait Service {
+object AbsenceQueue extends Serializable {
+  trait Service extends Serializable {
     def getUncompleted(num: Int): Task[List[AbsenceQueueItem]]
     def add(drafts: List[AbsenceQueueItem]): Task[Unit]
     def update(draft: AbsenceQueueItem): Task[Unit]

@@ -11,9 +11,9 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection}
 import com.typesafe.config.ConfigFactory
-import io.github.gaelrenoux.tranzactio.doobie.Database
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -119,11 +119,11 @@ object BarbarissaMain extends App {
 
     val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live >>> SqliteDataSource.live
 
-    val databaseLayer = dataSourceLayer ++ Blocking.live ++ Clock.live >>> Database.fromDatasource
+    val transactorLayer = dataSourceLayer >>> DbTransactor.live
 
-    val migrationRepoLayer = databaseLayer >>> DbMigrationRepo.live
+    val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
-    val absenceQueueLayer = databaseLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
+    val absenceQueueLayer = transactorLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
 
     val reportServiceLayer = DocxReportService.live
 

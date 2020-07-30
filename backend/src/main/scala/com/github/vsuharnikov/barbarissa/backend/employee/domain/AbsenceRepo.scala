@@ -6,10 +6,10 @@ import io.circe.generic.JsonCodec
 import zio.{Task, ZIO}
 
 // @accessible see https://github.com/zio/zio/issues/4020
-object AbsenceRepo {
+object AbsenceRepo extends Serializable {
   type RepoMultipleIO[A, Cursor] = Task[(List[A], Option[Cursor])]
 
-  trait Service {
+  trait Service extends Serializable {
     // TODO ZStream? Probably, if we know what we need to do with the end
     def getById(id: EmployeeId): RepoMultipleIO[Absence, GetCursor] = getByCursor(GetCursor(id, 0, 10))
     def getByCursor(cursor: GetCursor): RepoMultipleIO[Absence, GetCursor]

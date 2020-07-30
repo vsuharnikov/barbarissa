@@ -134,6 +134,8 @@ object MsExchangeAbsenceAppointmentService {
           MsExchangeAbsenceAppointmentService.toSearchFilter(filter, config.zoneId)
 
         private def toDate(x: LocalDate): Date = MsExchangeAbsenceAppointmentService.toDate(x, config.zoneId)
+
+        private def toLocalDate(x: Date): LocalDate = MsExchangeAbsenceAppointmentService.toLocalDate(x, config.zoneId)
       }
   }
 
@@ -148,7 +150,7 @@ object MsExchangeAbsenceAppointmentService {
 
   private def toDate(x: LocalDate, zoneId: ZoneId): Date = Date.from(x.atStartOfDay(zoneId).toInstant)
 
-  private def toLocalDate(x: Date): LocalDate = LocalDate.from(x.toInstant)
+  private def toLocalDate(x: Date, zoneId: ZoneId): LocalDate = x.toInstant.atZone(zoneId).toLocalDate
 
   private def findCalendarFolder(service: ExchangeService): Task[CalendarFolder] = Task {
     val rootFolder = Folder.bind(service, WellKnownFolderName.Root)

@@ -1,8 +1,7 @@
-package com.github.vsuharnikov.barbarissa.backend.shared.infra
+package com.github.vsuharnikov.barbarissa.backend.shared.infra.db
 
 import java.util.Properties
 
-import io.github.gaelrenoux.tranzactio.{doobie => _}
 import javax.sql.DataSource
 import org.sqlite.{SQLiteConfig, SQLiteDataSource}
 import zio._

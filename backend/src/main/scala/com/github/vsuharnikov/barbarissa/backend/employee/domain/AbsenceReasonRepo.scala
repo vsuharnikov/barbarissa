@@ -6,8 +6,8 @@ import zio.ZIO
 import zio.macros.accessible
 
 @accessible
-object AbsenceReasonRepo {
-  trait Service {
+object AbsenceReasonRepo extends Serializable {
+  trait Service extends Serializable {
     def get(by: AbsenceReasonId): ZIO[Any, error.RepoError, AbsenceReason]
     def all: ZIO[Any, error.RepoError, Map[AbsenceReasonId, AbsenceReason]]
   }

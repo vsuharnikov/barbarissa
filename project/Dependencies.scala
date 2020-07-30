@@ -22,7 +22,6 @@ object Dependencies {
     val scalaTest       = "3.1.1"
     val newType         = "0.4.4"
     val classGraph      = "4.8.87"
-    val tranzactio      = "0.6.0"
     val doobie          = "0.9.0"
     val sqlite          = "3.32.3.1"
   }
@@ -51,9 +50,8 @@ object Dependencies {
   )
 
   val db = Seq(
-    "io.github.gaelrenoux" %% "tranzactio"  % versionOf.tranzactio,
-    "org.tpolecat"         %% "doobie-core" % versionOf.doobie,
-    "org.xerial"           % "sqlite-jdbc"  % versionOf.sqlite
+    "org.tpolecat" %% "doobie-core" % versionOf.doobie,
+    "org.xerial"   % "sqlite-jdbc"  % versionOf.sqlite
   )
 
   val logs = Seq(

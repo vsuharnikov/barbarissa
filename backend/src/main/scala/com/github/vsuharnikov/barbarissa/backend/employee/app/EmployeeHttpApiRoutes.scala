@@ -15,7 +15,6 @@ import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.{HttpSearchCursor, JsonSupport, ListResponse, RoutesParsers}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.ForwardError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
-import doobie.`enum`.FetchDirection.Forward
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport

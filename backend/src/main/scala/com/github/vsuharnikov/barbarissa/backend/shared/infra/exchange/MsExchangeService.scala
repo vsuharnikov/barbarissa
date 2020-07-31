@@ -1,5 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange
 
+import java.net.URI
+
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
 import microsoft.exchange.webservices.data.core.ExchangeService
 import microsoft.exchange.webservices.data.core.enumeration.misc.ExchangeVersion
@@ -8,10 +10,14 @@ import zio.blocking.Blocking
 import zio.{ZIO, ZLayer}
 
 object MsExchangeService {
+  case class Config(apiTarget: ApiTargetConfig, credentials: CredentialsConfig)
   case class CredentialsConfig(username: String, password: String)
-  case class Config(credentials: CredentialsConfig)
+  sealed trait ApiTargetConfig extends Product with Serializable
+  object ApiTargetConfig {
+    case object AutoDiscover      extends ApiTargetConfig
+    case class Fixed(url: String) extends ApiTargetConfig
+  }
 
-  // TODO laziness
   val live = ZLayer.fromServicesM[Config, Blocking.Service, Any, Throwable, ExchangeService] { (config, blocking) =>
     blocking
       .blocking {
@@ -24,7 +30,12 @@ object MsExchangeService {
 
           val credentials = new WebCredentials(config.credentials.username, config.credentials.password)
           service.setCredentials(credentials)
-          service.autodiscoverUrl(config.credentials.username, new RedirectionUrlCallback)
+          config.apiTarget match {
+            case ApiTargetConfig.Fixed(url)   => service.setUrl(URI.create(url))
+            case ApiTargetConfig.AutoDiscover => service.autodiscoverUrl(config.credentials.username, new RedirectionUrlCallback)
+          }
+
+          // TODO log url
           service
         }
       }

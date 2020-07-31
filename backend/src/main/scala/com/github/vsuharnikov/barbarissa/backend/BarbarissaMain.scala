@@ -127,7 +127,7 @@ object BarbarissaMain extends App {
 
     val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live >>> MsExchangeService.live
 
-    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++
+    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Blocking.live ++
       msExchangeServiceLayer >>>
       MsExchangeAbsenceAppointmentService.live
 
@@ -173,7 +173,7 @@ object BarbarissaMain extends App {
           .toManaged
       }
 
-  private def makeHttpServer =
+  private def makeHttpServer: ZIO[AppEnvironment, Throwable, Unit] =
     ZIO.runtime[AppEnvironment].flatMap { implicit rts =>
       val s = SwaggerSupport[AppTask]
       import s._

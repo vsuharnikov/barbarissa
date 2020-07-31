@@ -27,8 +27,8 @@ object JiraApi extends Serializable {
     def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult]
   }
 
-  case class Config(restApi: Uri, credentials: BasicCredentials, retryPolicy: RetryPolicy)
-  case class RetryPolicy(recur: Int, space: Duration)
+  case class Config(restApi: Uri, credentials: BasicCredentials, retryPolicy: RetryPolicyConfig)
+  case class RetryPolicyConfig(recur: Int, space: Duration)
 
   val live = ZLayer.fromServices[Config, Clock.Service, Client[Task], Service] { (config, clock, client) =>
     new Service with JsonSupport[Task] {

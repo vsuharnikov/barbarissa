@@ -1,5 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange
 
+import java.io.IOException
 import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
@@ -10,18 +11,26 @@ import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, 
 import microsoft.exchange.webservices.data.core.service.item.{Appointment, Item}
 import microsoft.exchange.webservices.data.core.service.schema.{AppointmentSchema, FolderSchema}
 import microsoft.exchange.webservices.data.core.{ExchangeService, PropertySet}
-import microsoft.exchange.webservices.data.property.complex.MessageBody
 import microsoft.exchange.webservices.data.property.complex.time.OlsonTimeZoneDefinition
+import microsoft.exchange.webservices.data.property.complex.{FolderId, MessageBody}
 import microsoft.exchange.webservices.data.property.definition.ExtendedPropertyDefinition
 import microsoft.exchange.webservices.data.search.filter.SearchFilter
 import microsoft.exchange.webservices.data.search.filter.SearchFilter.SearchFilterCollection
 import microsoft.exchange.webservices.data.search.{FindItemsResults, FolderView, ItemView}
-import zio.{Task, ZLayer}
+import zio.blocking.{Blocking, effectBlockingIO}
+import zio.duration.Duration
+import zio.{Has, Task, ZIO, ZLayer}
 
 import scala.jdk.CollectionConverters._
 
 object MsExchangeAbsenceAppointmentService {
-  case class Config(searchPageSize: Int, zoneId: ZoneId)
+  case class Config(targetCalendarFolder: TargetCalendarFolderConfig, searchPageSize: Int, zoneId: ZoneId /*, retryPolicy: RetryPolicyConfig*/ )
+  case class RetryPolicyConfig(recur: Int, space: Duration)
+  sealed trait TargetCalendarFolderConfig extends Product with Serializable
+  object TargetCalendarFolderConfig {
+    case object AutoDiscover           extends TargetCalendarFolderConfig
+    case class Fixed(uniqueId: String) extends TargetCalendarFolderConfig
+  }
 
   private val jiraTaskKeyPropDef = new ExtendedPropertyDefinition(
     DefaultExtendedPropertySet.PublicStrings,
@@ -29,113 +38,133 @@ object MsExchangeAbsenceAppointmentService {
     MapiPropertyType.String
   )
 
-  val live = ZLayer.fromServicesM[Config, ExchangeService, Any, Throwable, AbsenceAppointmentService.Service] { (config, service) =>
-    for {
-      calendarFolder <- findCalendarFolder(service)
-    } yield
-      new AbsenceAppointmentService.Service {
-        private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
-        private val hasPropertySet     = new PropertySet(jiraTaskKeyPropDef)
-        private val getPropertySet     = new PropertySet(BasePropertySet.FirstClassProperties, jiraTaskKeyPropDef)
+  private val hasPropertySet = new PropertySet(jiraTaskKeyPropDef)
+  private val getPropertySet = new PropertySet(BasePropertySet.FirstClassProperties, jiraTaskKeyPropDef)
 
-        override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
-          has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
+  type Dependencies = Has[Config] with Blocking with Has[ExchangeService]
 
-        override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
-          get(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).map(_.map(toAbsenceAppointment))
+  val live: ZLayer[Dependencies, Throwable, Has[AbsenceAppointmentService.Service]] = ZIO
+    .accessM[Dependencies] { env =>
+      val config = env.get[Config]
+      val es     = env.get[ExchangeService]
 
-        override def add(appointment: AbsenceAppointment): Task[Unit] =
-          Task(toAppointment(appointment).save(calendarFolder.getId))
-
-        private def has(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
-          for {
-            items  <- Task.effect(calendarFolder.findItems(searchFilter, view))
-            hasNow <- Task.effect(hasIn(items, jiraTaskValue))
-            has <- if (hasNow || !items.isMoreAvailable) Task(hasNow)
-            else {
-              view.setOffset(items.getNextPageOffset) // TODO make more explicit
-              has(view, searchFilter, jiraTaskValue)
-            }
-          } yield has
-
-        private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean =
-          if (items.getItems.isEmpty) false
-          else {
-            service.loadPropertiesForItems(items, hasPropertySet)
-            items.asScala.exists { appointment =>
-              appointment.getExtendedProperties.asScala.exists { property =>
-                property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
-              }
-            }
+      for {
+        calendarFolder <- effectBlockingIO {
+          config.targetCalendarFolder match {
+            case TargetCalendarFolderConfig.AutoDiscover    => findCalendarFolder(es)
+            case TargetCalendarFolderConfig.Fixed(uniqueId) => CalendarFolder.bind(es, new FolderId(uniqueId))
           }
+        }
+      } yield
+        new AbsenceAppointmentService.Service {
+          private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
 
-        private def get(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Option[Appointment]] =
-          for {
-            items          <- Task.effect(calendarFolder.findItems(searchFilter, view))
-            appointmentNow <- Task.effect(getIn(items, jiraTaskValue))
-            appointment <- if (appointmentNow.isDefined || !items.isMoreAvailable) Task(appointmentNow)
+          override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
+            has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
+
+          override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
+            internalGet(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
+              .map(_.map(toAbsenceAppointment))
+              .provide(env)
+
+          override def add(appointment: AbsenceAppointment): Task[Unit] =
+            effectBlockingIO(toAppointment(appointment).save(calendarFolder.getId)).provide(env)
+
+          private def has(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
+            internalHas(view, searchFilter, jiraTaskValue).provide(env)
+
+          private def internalHas(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): ZIO[Blocking, Throwable, Boolean] =
+            for {
+              items  <- effectBlockingIO(calendarFolder.findItems(searchFilter, view))
+              hasNow <- effectBlockingIO(hasIn(items, jiraTaskValue))
+              has <- if (hasNow || !items.isMoreAvailable) Task(hasNow)
+              else {
+                view.setOffset(items.getNextPageOffset)
+                internalHas(view, searchFilter, jiraTaskValue)
+              }
+            } yield has
+
+          private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean =
+            if (items.getItems.isEmpty) false
             else {
-              view.setOffset(items.getNextPageOffset)
-              get(view, searchFilter, jiraTaskValue)
-            }
-          } yield appointment
-
-        private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] =
-          if (items.getItems.isEmpty) None
-          else {
-            service.loadPropertiesForItems(items, getPropertySet)
-            items.asScala
-              .find { item =>
-                item.getExtendedProperties.asScala.exists { property =>
+              es.loadPropertiesForItems(items, hasPropertySet)
+              items.asScala.exists { appointment =>
+                appointment.getExtendedProperties.asScala.exists { property =>
                   property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
                 }
               }
-              .collect { case appointment: Appointment => appointment }
+            }
+
+          private def internalGet(view: ItemView,
+                                  searchFilter: SearchFilter,
+                                  jiraTaskValue: String): ZIO[Blocking, IOException, Option[Appointment]] =
+            for {
+              items          <- effectBlockingIO(calendarFolder.findItems(searchFilter, view))
+              appointmentNow <- effectBlockingIO(getIn(items, jiraTaskValue))
+              appointment <- if (appointmentNow.isDefined || !items.isMoreAvailable) Task.succeed(appointmentNow)
+              else {
+                view.setOffset(items.getNextPageOffset)
+                internalGet(view, searchFilter, jiraTaskValue)
+              }
+            } yield appointment
+
+          private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] =
+            if (items.getItems.isEmpty) None
+            else {
+              es.loadPropertiesForItems(items, getPropertySet)
+              items.asScala
+                .find { item =>
+                  item.getExtendedProperties.asScala.exists { property =>
+                    property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
+                  }
+                }
+                .collect { case appointment: Appointment => appointment }
+            }
+
+          private def toAppointment(appointment: AbsenceAppointment): Appointment = {
+            val r = new Appointment(es)
+            r.setSubject(appointment.subject)
+            r.setSensitivity(Sensitivity.Normal)
+            r.setBody(MessageBody.getMessageBodyFromText(appointment.description))
+            r.setImportance(Importance.Normal)
+            r.setIsReminderSet(false)
+            r.setReminderDueBy(toDate(appointment.startDate))
+            r.setIsReminderSet(false)
+            r.setReminderMinutesBeforeStart(15)
+            r.setCulture("ru-RU")
+            r.setStart(toDate(appointment.startDate))
+            r.setEnd(toDate(appointment.endDate))
+            r.setIsAllDayEvent(true)
+            r.setLegacyFreeBusyStatus(LegacyFreeBusyStatus.OOF)
+            r.setIsResponseRequested(false)
+            r.setStartTimeZone(msExchangeTimeZone)
+            r.setEndTimeZone(msExchangeTimeZone)
+            r.setAllowNewTimeProposal(false)
+            r.setExtendedProperty(jiraTaskKeyPropDef, appointment.serviceMark)
+            r
           }
 
-        private def toAppointment(appointment: AbsenceAppointment): Appointment = {
-          val r = new Appointment(service)
-          r.setSubject(appointment.subject)
-          r.setSensitivity(Sensitivity.Normal)
-          r.setBody(MessageBody.getMessageBodyFromText(appointment.description))
-          r.setImportance(Importance.Normal)
-          r.setIsReminderSet(false)
-          r.setReminderDueBy(toDate(appointment.startDate))
-          r.setIsReminderSet(false)
-          r.setReminderMinutesBeforeStart(15)
-          r.setCulture("ru-RU")
-          r.setStart(toDate(appointment.startDate))
-          r.setEnd(toDate(appointment.endDate))
-          r.setIsAllDayEvent(true)
-          r.setLegacyFreeBusyStatus(LegacyFreeBusyStatus.OOF)
-          r.setIsResponseRequested(false)
-          r.setStartTimeZone(msExchangeTimeZone)
-          r.setEndTimeZone(msExchangeTimeZone)
-          r.setAllowNewTimeProposal(false)
-          r.setExtendedProperty(jiraTaskKeyPropDef, appointment.serviceMark)
-          r
+          private def toAbsenceAppointment(x: Appointment): AbsenceAppointment = AbsenceAppointment(
+            subject = x.getSubject,
+            description = x.getBody.toString,
+            startDate = toLocalDate(x.getStart),
+            endDate = toLocalDate(x.getEnd),
+            serviceMark = x.getExtendedProperties.asScala
+              .collectFirst {
+                case x if x.getPropertyDefinition == jiraTaskKeyPropDef => x.getValue.toString
+              }
+              .getOrElse("") // Impossible
+          )
+
+          private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter): SearchFilter =
+            MsExchangeAbsenceAppointmentService.toSearchFilter(filter, config.zoneId)
+
+          private def toDate(x: LocalDate): Date = MsExchangeAbsenceAppointmentService.toDate(x, config.zoneId)
+
+          private def toLocalDate(x: Date): LocalDate = MsExchangeAbsenceAppointmentService.toLocalDate(x, config.zoneId)
         }
-
-        private def toAbsenceAppointment(x: Appointment): AbsenceAppointment = AbsenceAppointment(
-          subject = x.getSubject,
-          description = x.getBody.toString,
-          startDate = toLocalDate(x.getStart),
-          endDate = toLocalDate(x.getEnd),
-          serviceMark = x.getExtendedProperties.asScala
-            .collectFirst {
-              case x if x.getPropertyDefinition == jiraTaskKeyPropDef => x.getValue.toString
-            }
-            .getOrElse("") // Impossible
-        )
-
-        private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter): SearchFilter =
-          MsExchangeAbsenceAppointmentService.toSearchFilter(filter, config.zoneId)
-
-        private def toDate(x: LocalDate): Date = MsExchangeAbsenceAppointmentService.toDate(x, config.zoneId)
-
-        private def toLocalDate(x: Date): LocalDate = MsExchangeAbsenceAppointmentService.toLocalDate(x, config.zoneId)
-      }
-  }
+    }
+    .toLayer
 
   private def toView(searchPageSize: Int): ItemView = new ItemView(searchPageSize, 0)
 
@@ -150,7 +179,7 @@ object MsExchangeAbsenceAppointmentService {
 
   private def toLocalDate(x: Date, zoneId: ZoneId): LocalDate = x.toInstant.atZone(zoneId).toLocalDate
 
-  private def findCalendarFolder(service: ExchangeService): Task[CalendarFolder] = Task {
+  private def findCalendarFolder(service: ExchangeService): CalendarFolder = {
     val rootFolder = Folder.bind(service, WellKnownFolderName.Root)
 
     val filter = new SearchFilterCollection(LogicalOperator.And)
@@ -169,5 +198,7 @@ object MsExchangeAbsenceAppointmentService {
         case folder: CalendarFolder => folder
         case folder                 => throw new RuntimeException(s"Found a non-calendar folder: ${folder.getClass.getName}. Ask a programmer.")
       }
+
+    // log folder id
   }
 }

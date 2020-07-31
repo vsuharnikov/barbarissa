@@ -13,8 +13,10 @@ import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQue
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection}
 import com.typesafe.config.ConfigFactory
+import org.http4s.Uri
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -44,7 +46,7 @@ object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
   case class BarbarissaConfig(backend: BackendConfig)
   case class BackendConfig(httpApi: HttpApiConfig,
-                           jira: JiraEmployeeRepo.Config,
+                           jira: JiraApi.Config,
                            msExchange: MsExchangeService.Config,
                            msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
@@ -112,11 +114,14 @@ object BarbarissaMain extends App {
 
     val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
-    val employeeRepoLayer = transactorLayer ++ migrationRepoLayer ++
-      (configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraEmployeeRepo.live) >>>
-      DbCachedEmployeeRepo.live
+    val jiraApiLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraApi.live
 
-    val absenceRepoLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraAbsenceRepo.live
+    val employeeRepoLayer = {
+      val underlyingLayer = jiraApiLayer >>> JiraEmployeeRepo.live
+      transactorLayer ++ migrationRepoLayer ++ underlyingLayer >>> DbCachedEmployeeRepo.live
+    }
+
+    val absenceRepoLayer = jiraApiLayer >>> JiraAbsenceRepo.live
 
     val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live >>> MsExchangeService.live
 
@@ -226,4 +231,5 @@ object BarbarissaMain extends App {
     },
     _.asScala.map { case (k, v) => s"$k" -> s"$v" }.toMap
   )
+  implicit val uriDescriptor: Descriptor[Uri] = Descriptor[String].xmap(Uri.unsafeFromString, _.renderString)
 }

@@ -8,12 +8,12 @@ import zio.{Task, ZIO}
 object AbsenceRepo extends Serializable {
   type RepoMultipleIO[A, Cursor] = Task[(List[A], Option[Cursor])]
 
+  // TODO ZStream? Probably, if we know what we need to do with the end
   trait Service extends Serializable {
-    // TODO ZStream? Probably, if we know what we need to do with the end
+    def get(absenceId: AbsenceId): Task[Option[Absence]]
+
     def getById(id: EmployeeId): RepoMultipleIO[Absence, GetCursor] = getByCursor(GetCursor(id, 0, 10))
     def getByCursor(cursor: GetCursor): RepoMultipleIO[Absence, GetCursor]
-
-    def get(absenceId: AbsenceId): Task[Option[Absence]]
 
     def getFromById(id: Option[AbsenceId]): RepoMultipleIO[Absence, GetAfterCursor] = getFromByCursor(GetAfterCursor(id, 0, 10))
     def getFromByCursor(cursor: GetAfterCursor): RepoMultipleIO[Absence, GetAfterCursor]

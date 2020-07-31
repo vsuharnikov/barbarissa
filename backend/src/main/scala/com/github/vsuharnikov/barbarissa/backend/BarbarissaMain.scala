@@ -127,9 +127,8 @@ object BarbarissaMain extends App {
 
     val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live >>> MsExchangeService.live
 
-    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Blocking.live ++
-      msExchangeServiceLayer >>>
-      MsExchangeAbsenceAppointmentService.live
+    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Clock.live ++
+      Blocking.live ++ msExchangeServiceLayer >>> MsExchangeAbsenceAppointmentService.live
 
     val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
 

@@ -18,13 +18,19 @@ import microsoft.exchange.webservices.data.search.filter.SearchFilter
 import microsoft.exchange.webservices.data.search.filter.SearchFilter.SearchFilterCollection
 import microsoft.exchange.webservices.data.search.{FindItemsResults, FolderView, ItemView}
 import zio.blocking.{Blocking, effectBlockingIO}
+import zio.clock.Clock
 import zio.duration.Duration
-import zio.{Has, Task, ZIO, ZLayer}
+import zio._
 
 import scala.jdk.CollectionConverters._
 
 object MsExchangeAbsenceAppointmentService {
-  case class Config(targetCalendarFolder: TargetCalendarFolderConfig, searchPageSize: Int, zoneId: ZoneId /*, retryPolicy: RetryPolicyConfig*/ )
+  case class Config(
+      targetCalendarFolder: TargetCalendarFolderConfig,
+      searchPageSize: Int,
+      zoneId: ZoneId,
+      retryPolicy: RetryPolicyConfig
+  )
   case class RetryPolicyConfig(recur: Int, space: Duration)
   sealed trait TargetCalendarFolderConfig extends Product with Serializable
   object TargetCalendarFolderConfig {
@@ -41,12 +47,14 @@ object MsExchangeAbsenceAppointmentService {
   private val hasPropertySet = new PropertySet(jiraTaskKeyPropDef)
   private val getPropertySet = new PropertySet(BasePropertySet.FirstClassProperties, jiraTaskKeyPropDef)
 
-  type Dependencies = Has[Config] with Blocking with Has[ExchangeService]
+  type Dependencies = Has[Config] with Clock with Blocking with Has[ExchangeService]
 
   val live: ZLayer[Dependencies, Throwable, Has[AbsenceAppointmentService.Service]] = ZIO
     .accessM[Dependencies] { env =>
       val config = env.get[Config]
       val es     = env.get[ExchangeService]
+      val retryPolicy: Schedule[Any, Throwable, Unit] =
+        (Schedule.recurs(config.retryPolicy.recur) && Schedule.spaced(config.retryPolicy.space)).unit.provide(env)
 
       for {
         calendarFolder <- effectBlockingIO {
@@ -54,35 +62,40 @@ object MsExchangeAbsenceAppointmentService {
             case TargetCalendarFolderConfig.AutoDiscover    => findCalendarFolder(es)
             case TargetCalendarFolderConfig.Fixed(uniqueId) => CalendarFolder.bind(es, new FolderId(uniqueId))
           }
-        }
+        }.retry(retryPolicy)
       } yield
         new AbsenceAppointmentService.Service {
           private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
 
           override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
-            has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
+            has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).retry(retryPolicy)
 
           override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
             internalGet(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
               .map(_.map(toAbsenceAppointment))
-              .provide(env)
+              .retry(retryPolicy)
 
           override def add(appointment: AbsenceAppointment): Task[Unit] =
-            effectBlockingIO(toAppointment(appointment).save(calendarFolder.getId)).provide(env)
+            effectBlockingIO(toAppointment(appointment).save(calendarFolder.getId))
+              .retry(retryPolicy)
+              .provide(env)
 
           private def has(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
             internalHas(view, searchFilter, jiraTaskValue).provide(env)
 
           private def internalHas(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): ZIO[Blocking, Throwable, Boolean] =
             for {
-              items  <- effectBlockingIO(calendarFolder.findItems(searchFilter, view))
-              hasNow <- effectBlockingIO(hasIn(items, jiraTaskValue))
+              items  <- findItemsF(view, searchFilter)
+              hasNow <- hasInF(items, jiraTaskValue)
               has <- if (hasNow || !items.isMoreAvailable) Task(hasNow)
               else {
                 view.setOffset(items.getNextPageOffset)
                 internalHas(view, searchFilter, jiraTaskValue)
               }
             } yield has
+
+          private def hasInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Boolean] =
+            effectBlockingIO(hasIn(items, jiraTaskValue)).provide(env)
 
           private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean =
             if (items.getItems.isEmpty) false
@@ -95,18 +108,22 @@ object MsExchangeAbsenceAppointmentService {
               }
             }
 
-          private def internalGet(view: ItemView,
-                                  searchFilter: SearchFilter,
-                                  jiraTaskValue: String): ZIO[Blocking, IOException, Option[Appointment]] =
+          private def internalGet(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Option[Appointment]] =
             for {
-              items          <- effectBlockingIO(calendarFolder.findItems(searchFilter, view))
-              appointmentNow <- effectBlockingIO(getIn(items, jiraTaskValue))
+              items          <- findItemsF(view, searchFilter)
+              appointmentNow <- getInF(items, jiraTaskValue)
               appointment <- if (appointmentNow.isDefined || !items.isMoreAvailable) Task.succeed(appointmentNow)
               else {
                 view.setOffset(items.getNextPageOffset)
                 internalGet(view, searchFilter, jiraTaskValue)
               }
             } yield appointment
+
+          private def findItemsF(view: ItemView, searchFilter: SearchFilter): Task[FindItemsResults[Item]] =
+            effectBlockingIO(calendarFolder.findItems(searchFilter, view)).provide(env)
+
+          private def getInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Option[Appointment]] =
+            effectBlockingIO(getIn(items, jiraTaskValue)).provide(env)
 
           private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] =
             if (items.getItems.isEmpty) None

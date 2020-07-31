@@ -10,11 +10,13 @@ import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRou
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchangeService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, MsExchangeService, PadegInflection}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
 import org.http4s.Uri
 import org.http4s.client.Client
@@ -114,7 +116,7 @@ object BarbarissaMain extends App {
 
     val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
-    val jiraApiLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ httpClientLayer >>> JiraApi.live
+    val jiraApiLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ Clock.live ++ httpClientLayer >>> JiraApi.live
 
     val employeeRepoLayer = {
       val underlyingLayer = jiraApiLayer >>> JiraEmployeeRepo.live

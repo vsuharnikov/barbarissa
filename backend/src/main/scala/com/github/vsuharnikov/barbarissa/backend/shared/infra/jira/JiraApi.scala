@@ -10,9 +10,11 @@ import org.http4s.Method.{POST, PUT}
 import org.http4s._
 import org.http4s.client.Client
 import org.http4s.headers.{AgentProduct, Authorization, `Content-Type`, `User-Agent`}
+import zio.clock.Clock
+import zio.duration.Duration
 import zio.interop.catz._
 import zio.macros.accessible
-import zio.{Task, ZIO, ZLayer}
+import zio.{Has, Schedule, Task, ZIO, ZLayer}
 
 @accessible
 object JiraApi extends Serializable {
@@ -25,9 +27,10 @@ object JiraApi extends Serializable {
     def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult]
   }
 
-  case class Config(restApi: Uri, credentials: BasicCredentials)
+  case class Config(restApi: Uri, credentials: BasicCredentials, retryPolicy: RetryPolicy)
+  case class RetryPolicy(recur: Int, space: Duration)
 
-  val live = ZLayer.fromServices[Config, Client[Task], Service] { (config, client) =>
+  val live = ZLayer.fromServices[Config, Clock.Service, Client[Task], Service] { (config, clock, client) =>
     new Service with JsonSupport[Task] {
       private val jiraUri = new JiraUri(config.restApi)
 
@@ -73,6 +76,16 @@ object JiraApi extends Serializable {
               if (x.status == Status.NotFound) Task.succeed(none)
               else Task.fail(new HttpClientException(x.status))
           }
+          .retry(retryPolicy)
+
+      private val retryPolicy: Schedule[Any, Throwable, Unit] = {
+        Schedule.recurs(config.retryPolicy.recur) &&
+        Schedule.spaced(config.retryPolicy.space) &&
+        Schedule.doWhile[Throwable] {
+          case _: HttpClientException => false
+          case _                      => true
+        }
+      }.unit.provide(Has(clock))
     }
   }
 

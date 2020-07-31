@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.shared.infra
+package com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange
 
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
 import microsoft.exchange.webservices.data.core.ExchangeService

@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange
 
 import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}

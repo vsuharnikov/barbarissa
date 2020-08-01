@@ -3,7 +3,7 @@
 <!-- Add  scanPeriod="30 seconds" to refresh configuration -->
 <configuration scan="true">
     <property name="logback.common.pattern"
-              value="${logback.common.pattern:-%date{ISO8601,UTC} %-5level [%.25thread] %logger{26} - %msg%n%ex}"/>
+              value="${logback.common.pattern:-%date{ISO8601,UTC} %-5level [%.25thread] [%X{requestId:-null}] %logger{26} - %msg%n%ex}"/>
 
     <!-- STDOUT logs properties -->
     <property name="logback.stdout.pattern" value="${logback.stdout.pattern:-${logback.common.pattern}}"/>
@@ -17,6 +17,8 @@
     <logger name="org.http4s" level="WARN"/>
     <logger name="org.http4s.server.middleware.RequestLogger" level="INFO"/>
     <logger name="org.http4s.server.middleware.ResponseLogger" level="INFO"/>
+    <logger name="org.http4s.client.middleware.RequestLogger" level="INFO"/>
+    <logger name="org.http4s.client.middleware.ResponseLogger" level="INFO"/>
 
     <!-- DOCX -->
     <logger name="com.deepoove.poi.resolver" level="WARN"/>

@@ -15,6 +15,7 @@ import zio.duration.Duration
 import zio.interop.catz._
 import zio.macros.accessible
 import zio._
+import zio.logging._
 
 @accessible
 object JiraApi extends Serializable {
@@ -30,65 +31,72 @@ object JiraApi extends Serializable {
   case class Config(restApi: Uri, credentials: BasicCredentials, retryPolicy: RetryPolicyConfig)
   case class RetryPolicyConfig(recur: Int, space: Duration)
 
-  val live = ZLayer.fromServices[Config, Clock.Service, Client[Task], Service] { (config, clock, client) =>
-    new Service with JsonEntitiesEncoding[Task] {
-      private val jiraUri = new JiraUri(config.restApi)
+  type Dependencies = Has[Config] with Clock with Logging with Has[Client[Task]]
 
-      private val commonHeaders = Headers.of(
-        Authorization(BasicCredentials(config.credentials.username, config.credentials.password)),
-        `User-Agent`(AgentProduct("barbarissa", Version.VersionString.some))
-      )
+  val live: ZLayer[Dependencies, Nothing, Has[Service]] = ZIO
+    .access[Dependencies] { env =>
+      val config = env.get[Config]
+      val client = env.get[Client[Task]]
 
-      override def getUserBasicData(username: String): Task[Option[JiraBasicUserData]] =
-        get[JiraBasicUserData](jiraUri.userBasicData(username))
+      new Service with JsonEntitiesEncoding[Task] {
+        private val jiraUri = new JiraUri(config.restApi)
 
-      override def setUserExtendedData(username: String, draft: JiraExtendedUserData): Task[Unit] = {
-        val uri = jiraUri.userExtendedData(username)
-        val req = Request[Task](PUT, uri, headers = commonHeaders)
-          .withContentType(`Content-Type`(MediaType.application.json))
-          .withEntity(draft.asJson)
+        private val commonHeaders = Headers.of(
+          Authorization(BasicCredentials(config.credentials.username, config.credentials.password)),
+          `User-Agent`(AgentProduct("barbarissa", Version.VersionString.some))
+        )
 
-        run(req)(_ => Task.unit).unit
-      }
+        override def getUserBasicData(username: String): Task[Option[JiraBasicUserData]] =
+          get[JiraBasicUserData](jiraUri.userBasicData(username))
 
-      override def getUserExtendedData(username: String): Task[Option[JiraExtendedUserData]] =
-        get[JiraGetExtendedUserData](jiraUri.userExtendedData(username)).map(_.map(_.value))
+        override def setUserExtendedData(username: String, draft: JiraExtendedUserData): Task[Unit] = {
+          val uri = jiraUri.userExtendedData(username)
+          val req = Request[Task](PUT, uri, headers = commonHeaders)
+            .withContentType(`Content-Type`(MediaType.application.json))
+            .withEntity(draft.asJson)
 
-      override def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult] = {
-        val httpReq = Request[Task](POST, jiraUri.searchIssue, headers = commonHeaders).withEntity(req)
-        run(httpReq)(_.as[JiraSearchResult]).flatMap {
-          // It is impossible. So treat 404 as a client error
-          case None    => ZIO.fail(DomainError.NotFound("JiraIssue", s"${req.jql}"))
-          case Some(x) => ZIO.succeed(x)
+          run(req)(_ => Task.unit).unit
         }
-      }
 
-      private def get[T](uri: Uri)(implicit ed: EntityDecoder[Task, T]): Task[Option[T]] =
-        run(Request[Task](uri = uri, headers = commonHeaders))(_.as[T])
+        override def getUserExtendedData(username: String): Task[Option[JiraExtendedUserData]] =
+          get[JiraGetExtendedUserData](jiraUri.userExtendedData(username)).map(_.map(_.value))
 
-      private val remoteCallFailed = DomainError.RemoteCallFailed("Jira")
-      private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[Option[T]] =
-        client
-          .run(req)
-          .use {
-            case Status.Successful(x)  => f(x).map(_.some)
-            case Status.ServerError(_) => Task.fail(remoteCallFailed)
-            case x =>
-              if (x.status == Status.NotFound) Task.succeed(none)
-              else Task.fail(DomainError.UnhandledError("Jira call failed"))
+        override def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult] = {
+          val httpReq = Request[Task](POST, jiraUri.searchIssue, headers = commonHeaders).withEntity(req)
+          run(httpReq)(_.as[JiraSearchResult]).flatMap {
+            // It is impossible. So treat 404 as a client error
+            case None    => ZIO.fail(DomainError.NotFound("JiraIssue", s"${req.jql}"))
+            case Some(x) => ZIO.succeed(x)
           }
-          .retry(retryPolicy)
-
-      private val retryPolicy: Schedule[Any, Throwable, Unit] = {
-        Schedule.recurs(config.retryPolicy.recur) &&
-        Schedule.spaced(config.retryPolicy.space) &&
-        Schedule.doWhile[Throwable] {
-          case _: DomainError.UnhandledError => false
-          case _                             => true
         }
-      }.unit.provide(Has(clock))
+
+        private def get[T](uri: Uri)(implicit ed: EntityDecoder[Task, T]): Task[Option[T]] =
+          run(Request[Task](uri = uri, headers = commonHeaders))(_.as[T])
+
+        private val remoteCallFailed = DomainError.RemoteCallFailed("Jira")
+        private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[Option[T]] =
+          client
+            .run(req)
+            .use {
+              case Status.Successful(x)  => f(x).map(_.some)
+              case Status.ServerError(_) => Task.fail(remoteCallFailed)
+              case x =>
+                if (x.status == Status.NotFound) Task.succeed(none)
+                else Task.fail(DomainError.UnhandledError("Jira call failed"))
+            }
+            .retry(retryPolicy)
+
+        private val retryPolicy: Schedule[Any, Throwable, Unit] = {
+          Schedule.recurs(config.retryPolicy.recur) &&
+          Schedule.spaced(config.retryPolicy.space) &&
+          Schedule.doWhile[Throwable] {
+            case _: DomainError.UnhandledError => false
+            case _                             => true
+          }
+        }.unit.provide(env)
+      }
     }
-  }
+    .toLayer
 
   class JiraUri(restApi: Uri) {
     def userBasicData(username: String): Uri = restApi / "2" / "user" withQueryParams Map("username" -> username)

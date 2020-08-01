@@ -6,7 +6,7 @@ import java.time.ZoneId
 import java.util.Properties
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes
+import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
@@ -104,29 +104,43 @@ object BarbarissaMain extends App {
           .mapError(desc => new IllegalArgumentException(s"Can't parse config:\n$desc"))
       }
 
-    val loggingLayer = Slf4jLogger.make(
+    val loggingLayer = Slf4jLogger.makeWithAnnotationsAsMdc(
+      rootLoggerName = Some("barbarissa-main"),
       logFormat = (_, logEntry) => logEntry,
-      rootLoggerName = Some("barbarissa-main")
+      mdcAnnotations = List(requestIdLogAnnotation)
     )
 
-    val httpClientLayer = httpClient.map(Logger[Task](logBody = true, logHeaders = true)(_)).toLayer
+    val httpClientLayer = loggingLayer ++ httpClient.toLayer >>> ZIO
+      .access[Has[Client[Task]] with Logging] { env =>
+        val client = env.get[Client[Task]]
+        Logger[Task](
+          logBody = true,
+          logHeaders = true,
+          logAction = Some(
+            (x: String) => log.info(x).provide(env)
+          )
+        )(client)
+      }
+      .toLayer
 
-    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live >>> SqliteDataSource.live
+    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live ++ loggingLayer >>> SqliteDataSource.live
 
-    val transactorLayer = dataSourceLayer >>> DbTransactor.live
+    val transactorLayer = dataSourceLayer ++ Blocking.live ++ loggingLayer >>> DbTransactor.live
 
     val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
-    val jiraApiLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ Clock.live ++ httpClientLayer >>> JiraApi.live
+    val jiraApiLayer = configLayer.narrow(_.barbarissa.backend.jira) ++ Clock.live ++ loggingLayer ++ httpClientLayer >>>
+      JiraApi.live
 
     val employeeRepoLayer = {
-      val underlyingLayer = jiraApiLayer >>> JiraEmployeeRepo.live
+      val underlyingLayer = loggingLayer ++ jiraApiLayer >>> JiraEmployeeRepo.live
       transactorLayer ++ migrationRepoLayer ++ underlyingLayer >>> DbCachedEmployeeRepo.live
     }
 
-    val absenceRepoLayer = jiraApiLayer >>> JiraAbsenceRepo.live
+    val absenceRepoLayer = loggingLayer ++ jiraApiLayer >>> JiraAbsenceRepo.live
 
-    val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live >>> MsExchangeService.live
+    val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live ++ loggingLayer >>>
+      MsExchangeService.live
 
     val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Clock.live ++
       Blocking.live ++ msExchangeServiceLayer >>> MsExchangeAbsenceAppointmentService.live
@@ -143,8 +157,8 @@ object BarbarissaMain extends App {
       absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
       reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
 
-    val routesLayer = configLayer.narrow(_.barbarissa.backend.routes) ++ employeeRepoLayer ++ absenceRepoLayer ++
-      absenceReasonRepoLayer ++ absenceQueueLayer ++ reportServiceLayer ++ absenceAppointmentServiceLayer ++
+    val routesLayer = configLayer.narrow(_.barbarissa.backend.routes) ++ loggingLayer ++ employeeRepoLayer ++
+      absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ reportServiceLayer ++ absenceAppointmentServiceLayer ++
       processingServiceLayer
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
@@ -206,12 +220,11 @@ object BarbarissaMain extends App {
         }
       }
 
+      // TODO MDC logging
       val restApiConfig = rts.environment.get[HttpApiConfig]
       BlazeServerBuilder[AppTask](rts.platform.executor.asEC)
         .bindHttp(restApiConfig.port, restApiConfig.host)
-        .withHttpApp {
-          middleware(httpApp)
-        }
+        .withHttpApp(middleware(httpApp))
         .serve
         .compile[AppTask, AppTask, cats.effect.ExitCode]
         .drain

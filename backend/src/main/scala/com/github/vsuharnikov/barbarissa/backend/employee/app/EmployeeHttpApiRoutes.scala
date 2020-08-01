@@ -14,17 +14,20 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, ReportService}
-import org.http4s.Response
+import org.http4s.{Request, Response}
 import org.http4s.Status.InternalServerError
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.Result.BaseResult
 import org.http4s.rho.swagger.SwaggerSupport
 import org.http4s.rho.{Result, RhoRoutes}
+import org.http4s.server.middleware.RequestId
+import org.http4s.util.CaseInsensitiveString
 import zio.interop.catz._
+import zio.logging._
 import zio.{Has, RIO, URIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
+    R <: Has[EmployeeHttpApiRoutes.Config] with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonEntitiesEncoding[RIO[R, *]] {
   type HttpIO[A]   = RIO[R, A]
@@ -42,8 +45,8 @@ class EmployeeHttpApiRoutes[
 
     "Gets an employee by id" **
       "employee" @@
-        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { id: EmployeeId =>
-      handleErrors {
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { (req: Request[HttpIO], id: EmployeeId) =>
+      midd(req) {
         EmployeeRepo
           .get(id)
           .flatMap {
@@ -56,8 +59,8 @@ class EmployeeHttpApiRoutes[
     "Updates an employee by id" **
       "employee" @@
         PATCH / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") ^ circeJsonDecoder[HttpV0UpdateEmployee] |>> {
-      (id: EmployeeId, api: HttpV0UpdateEmployee) =>
-        handleErrors {
+      (req: Request[HttpIO], id: EmployeeId, api: HttpV0UpdateEmployee) =>
+        midd(req) {
           for {
             orig <- EmployeeRepo.get(id)
             orig <- orig match {
@@ -78,8 +81,8 @@ class EmployeeHttpApiRoutes[
     "Gets an employee's absences" **
       "absence" @@
         GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") / "absence" +? param[Option[HttpSearchCursor]]("cursor") |>> {
-      (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
-        handleErrors {
+      (req: Request[HttpIO], id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
+        midd(req) {
           for {
             absences       <- AbsenceRepo.getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
             absenceReasons <- AbsenceReasonRepo.all
@@ -98,8 +101,8 @@ class EmployeeHttpApiRoutes[
 
     "Gets an absence by id" **
       "absence" @@
-        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") |>> { (id: AbsenceId) =>
-      handleErrors {
+        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") |>> { (req: Request[HttpIO], id: AbsenceId) =>
+      midd(req) {
         for {
           absence <- AbsenceRepo.get(id).flatMap {
             case Some(x) => ZIO.succeed(x)
@@ -161,8 +164,8 @@ class EmployeeHttpApiRoutes[
 
     "Gets an appointment for employee's absence" **
       "appointment" @@
-        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
-      handleErrors {
+        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (req: Request[HttpIO], id: AbsenceId) =>
+      midd(req) {
         for {
           absence <- AbsenceRepo.get(id).flatMap {
             case Some(x) => ZIO.succeed(x)
@@ -187,8 +190,8 @@ class EmployeeHttpApiRoutes[
 
     "Places an appointment for employee's absence" **
       "appointment" @@
-        PUT / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
-      handleErrors {
+        PUT / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (req: Request[HttpIO], id: AbsenceId) =>
+      midd(req) {
         for {
           absence <- AbsenceRepo.get(id).flatMap {
             case Some(x) => ZIO.succeed(x)
@@ -223,8 +226,8 @@ class EmployeeHttpApiRoutes[
 
     "Add an item to the queue" **
       "queue" @@
-        POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[HttpV0AbsenceQueueItem] |>> { api: HttpV0AbsenceQueueItem =>
-      handleErrors {
+        POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[HttpV0AbsenceQueueItem] |>> { (req: Request[HttpIO], api: HttpV0AbsenceQueueItem) =>
+      midd(req) {
         val draft = AbsenceQueueItem(
           absenceId = AbsenceId(api.absenceId),
           done = api.done,
@@ -238,15 +241,15 @@ class EmployeeHttpApiRoutes[
 
     "Refreshes the queue" **
       "processing" @@
-        POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
-      handleErrors {
-        ProcessingService.refreshQueue *> Ok("")
+        POST / "api" / "v0" / "processing" / "refreshQueue" |>> { (req: Request[HttpIO]) =>
+      midd(req) {
+        ProcessingService.refreshQueue *> Ok("Done")
       }
     }
 
     "Process items in the queue" **
       "processing" @@
-        POST / "api" / "v0" / "processing" / "process" |>> {
+        POST / "api" / "v0" / "processing" / "process" |>> { (req: Request[HttpIO]) =>
       handleErrors {
         ProcessingService.process *> Ok("Processed")
       }
@@ -279,7 +282,7 @@ class EmployeeHttpApiRoutes[
 
   private def draft(domain: Employee, api: HttpV0UpdateEmployee): Employee = domain.copy(
     localizedName = api.localizedName.some,
-    companyId = api.companyId.some.map(CompanyId(_)),
+    companyId = api.companyId.some.map(CompanyId),
     position = api.position.some
   )
 
@@ -294,6 +297,11 @@ class EmployeeHttpApiRoutes[
   private def toSinGenDateStr(x: LocalDate): String = s"${x.getDayOfMonth} ${x.getMonth.getDisplayName(TextStyle.FULL, locale)} ${x.getYear}"
   private def toDateStr(x: LocalDate): String       = dateFormatter.format(x)
 
+  private def midd(req: Request[HttpIO])(f: => HttpIO[Result.BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] =
+    withRequestId(req) {
+      handleErrors(f)
+    }
+
   // TODO https://typelevel.org/blog/2018/08/25/http4s-error-handling-mtl.html
   private def handleErrors(r: HttpIO[Result.BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] = r.foldM(
     {
@@ -302,6 +310,11 @@ class EmployeeHttpApiRoutes[
     },
     x => x.pure[HttpURIO]
   )
+
+  private def withRequestId(req: Request[HttpIO])(f: => ZIO[R, Nothing, BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] = {
+    val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
+    log.locally(_.annotate(requestIdLogAnnotation, requestId))(f)
+  }
 }
 
 object EmployeeHttpApiRoutes {

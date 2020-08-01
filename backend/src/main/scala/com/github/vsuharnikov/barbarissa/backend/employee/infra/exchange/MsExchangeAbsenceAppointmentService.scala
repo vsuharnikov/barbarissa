@@ -4,6 +4,7 @@ import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.exception.dns.DnsException
@@ -218,12 +219,12 @@ object MsExchangeAbsenceAppointmentService {
 
     val folders       = rootFolder.findFolders(filter, view).getFolders
     val foldersNumber = folders.size()
-    if (foldersNumber == 0) throw new RuntimeException("Can't find a Calendar folder. Try to switch a user.")
-    else if (foldersNumber > 1) throw new RuntimeException("Found multiple Calendar folders. Ask a programmer.")
+    if (foldersNumber == 0) throw DomainError.ConfigurationError("Can't find a Calendar folder. Try to switch a user")
+    else if (foldersNumber > 1) throw DomainError.UnhandledError("Found multiple Calendar folders")
     else
       folders.get(0) match {
         case folder: CalendarFolder => folder
-        case folder                 => throw new RuntimeException(s"Found a non-calendar folder: ${folder.getClass.getName}. Ask a programmer.")
+        case folder                 => throw DomainError.ConfigurationError(s"Found a non-calendar folder: ${folder.getClass.getSimpleName}")
       }
 
     // log folder id

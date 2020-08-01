@@ -4,7 +4,7 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities._
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.{HttpClientException, HttpServerException}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
 import org.http4s._
@@ -14,7 +14,7 @@ import zio.clock.Clock
 import zio.duration.Duration
 import zio.interop.catz._
 import zio.macros.accessible
-import zio.{Has, Schedule, Task, ZIO, ZLayer}
+import zio._
 
 @accessible
 object JiraApi extends Serializable {
@@ -58,7 +58,7 @@ object JiraApi extends Serializable {
         val httpReq = Request[Task](POST, jiraUri.searchIssue, headers = commonHeaders).withEntity(req)
         run(httpReq)(_.as[JiraSearchResult]).flatMap {
           // It is impossible. So treat 404 as a client error
-          case None    => ZIO.fail(new HttpClientException(Status.NotFound))
+          case None    => ZIO.fail(DomainError.NotFound("JiraIssue", s"${req.jql}"))
           case Some(x) => ZIO.succeed(x)
         }
       }
@@ -66,15 +66,16 @@ object JiraApi extends Serializable {
       private def get[T](uri: Uri)(implicit ed: EntityDecoder[Task, T]): Task[Option[T]] =
         run(Request[Task](uri = uri, headers = commonHeaders))(_.as[T])
 
+      private val remoteCallFailed = DomainError.RemoteCallFailed("Jira")
       private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[Option[T]] =
         client
           .run(req)
           .use {
             case Status.Successful(x)  => f(x).map(_.some)
-            case Status.ServerError(x) => Task.fail(new HttpServerException(x.status))
+            case Status.ServerError(_) => Task.fail(remoteCallFailed)
             case x =>
               if (x.status == Status.NotFound) Task.succeed(none)
-              else Task.fail(new HttpClientException(x.status))
+              else Task.fail(DomainError.UnhandledError("Jira call failed"))
           }
           .retry(retryPolicy)
 
@@ -82,8 +83,8 @@ object JiraApi extends Serializable {
         Schedule.recurs(config.retryPolicy.recur) &&
         Schedule.spaced(config.retryPolicy.space) &&
         Schedule.doWhile[Throwable] {
-          case _: HttpClientException => false
-          case _                      => true
+          case _: DomainError.UnhandledError => false
+          case _                             => true
         }
       }.unit.provide(Has(clock))
     }

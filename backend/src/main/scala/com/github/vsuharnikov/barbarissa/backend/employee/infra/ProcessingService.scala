@@ -11,8 +11,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.Get
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.MailService.EmailAddress
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.{ClaimNotRequired, ForwardError, RepoRecordNotFound, TemplateNotFound}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, MailService, ReportService}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.PadegInflection
 import zio.macros.accessible
 import zio.{Has, Task, ZIO, ZLayer}
@@ -61,12 +60,12 @@ object ProcessingService {
           .when(!x.done) {
             for {
               absence <- AbsenceRepo.get(x.absenceId).flatMap {
-                case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
                 case Some(x) => ZIO.succeed(x)
+                case None    => ZIO.fail(DomainError.NotFound("Absence", x.absenceId.asString))
               }
               employee <- EmployeeRepo.get(absence.employeeId).flatMap {
                 case Some(x) => ZIO.succeed(x)
-                case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
+                case None    => ZIO.fail(DomainError.NotFound("Employee", absence.employeeId.asString))
               }
               appointmentCreated <- ZIO
                 .when(!x.appointmentCreated) {
@@ -97,32 +96,36 @@ object ProcessingService {
         for {
           absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
             case Some(x) => ZIO.succeed(x)
-            case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
+            case None    => ZIO.fail(DomainError.NotFound("AbsenceReason", absence.reasonId.asString))
           }
-          absenceReasonSuffix <- absenceReason.needClaim match {
-            case Some(AbsenceClaimType.WithoutCompensation) => ZIO.succeed("without-compensation")
-            case Some(AbsenceClaimType.WithCompensation)    => ZIO.succeed("with-compensation")
-            case None                                       => ZIO.fail(ForwardError(ClaimNotRequired))
+          _ <- ZIO.foreach(absenceReason.needClaim) { claimType =>
+            val absenceReasonSuffix = claimType match {
+              case AbsenceClaimType.WithoutCompensation => "without-compensation"
+              case AbsenceClaimType.WithCompensation    => "with-compensation"
+            }
+
+            for {
+              templateFile <- {
+                val companyId = employee.companyId.map(_.asString).getOrElse("unknown")
+                val fileName  = s"$companyId-$absenceReasonSuffix.docx"
+                val r         = config.templatesDir.toPath.resolve(fileName).toFile
+                if (r.isFile) ZIO.succeed(r)
+                else ZIO.fail(DomainError.NotFound("Template", fileName))
+              }
+              report <- {
+                val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO IoC
+                ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
+              }
+              _ <- MailService.send(
+                to = EmailAddress(employee.email),
+                subject = "Заявление на отпуск",
+                bodyText = "Подпишите и отправьте в HR",
+                attachments = Map(
+                  "claim.docx" -> report
+                )
+              )
+            } yield ()
           }
-          templateFile <- {
-            val companyId = employee.companyId.map(_.asString).getOrElse("unknown")
-            val fileName  = s"$companyId-$absenceReasonSuffix.docx"
-            val r         = config.templatesDir.toPath.resolve(fileName).toFile
-            if (r.isFile) ZIO.succeed(r)
-            else ZIO.fail(ForwardError(TemplateNotFound))
-          }
-          report <- {
-            val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO
-            ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
-          }
-          _ <- MailService.send(
-            to = EmailAddress(employee.email),
-            subject = "Заявление на отпуск",
-            bodyText = "Подпишите и отправьте в HR",
-            attachments = Map(
-              "claim.docx" -> report
-            )
-          )
         } yield ()
       }.provide(env)
 

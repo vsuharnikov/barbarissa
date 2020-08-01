@@ -2,8 +2,8 @@ package com.github.vsuharnikov.barbarissa.backend.shared.infra.jira
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
+import com.github.vsuharnikov.barbarissa.backend.employee.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities._
-import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
@@ -31,7 +31,7 @@ object JiraApi extends Serializable {
   case class RetryPolicyConfig(recur: Int, space: Duration)
 
   val live = ZLayer.fromServices[Config, Clock.Service, Client[Task], Service] { (config, clock, client) =>
-    new Service with JsonSupport[Task] {
+    new Service with JsonEntitiesEncoding[Task] {
       private val jiraUri = new JiraUri(config.restApi)
 
       private val commonHeaders = Headers.of(

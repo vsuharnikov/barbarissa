@@ -1,8 +1,8 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app
 
-import io.circe.generic.JsonCodec
+import io.circe.generic.extras.ConfiguredJsonCodec
 
-@JsonCodec case class HttpV0Employee(
+@ConfiguredJsonCodec case class HttpV0Employee(
     id: String,
     name: String,
     localizedName: Option[String],

@@ -1,17 +1,17 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.employee.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.{GetAfterCursor, GetCursor}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult, JiraSearchResultItem}
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import zio.{Task, ZLayer}
 
 object JiraAbsenceRepo {
   val live = ZLayer.fromService[JiraApi.Service, AbsenceRepo.Service] { api =>
-    new AbsenceRepo.Service with JsonSupport[Task] {
+    new AbsenceRepo.Service with JsonEntitiesEncoding[Task] {
       private val searchRequestFields = List(
         "reporter",
         "customfield_10439", // "Absence reason"

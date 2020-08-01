@@ -26,7 +26,7 @@ import zio.{Has, RIO, URIO, ZIO}
 class EmployeeHttpApiRoutes[
     R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
-    extends JsonSupport[RIO[R, *]] {
+    extends JsonEntitiesEncoding[RIO[R, *]] {
   type HttpIO[A]   = RIO[R, A]
   type HttpURIO[A] = URIO[R, A]
 
@@ -223,8 +223,15 @@ class EmployeeHttpApiRoutes[
 
     "Add an item to the queue" **
       "queue" @@
-        POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[AbsenceQueueItem] |>> { draft: AbsenceQueueItem =>
+        POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[HttpV0AbsenceQueueItem] |>> { api: HttpV0AbsenceQueueItem =>
       handleErrors {
+        val draft = AbsenceQueueItem(
+          absenceId = AbsenceId(api.absenceId),
+          done = api.done,
+          claimSent = api.done,
+          appointmentCreated = api.appointmentCreated,
+          retries = api.retries
+        )
         AbsenceQueue.add(List(draft)) *> Ok("Added")
       }
     }

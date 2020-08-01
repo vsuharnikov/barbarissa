@@ -1,7 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
 import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
-import io.circe.generic.JsonCodec
 import zio.{Task, ZIO}
 
 // @accessible see https://github.com/zio/zio/issues/4020
@@ -27,6 +26,6 @@ object AbsenceRepo extends Serializable {
   def getFromById(id: Option[AbsenceId])      = ZIO.accessM[AbsenceRepo](_.get[Service].getFromById(id))
   def getFromByCursor(cursor: GetAfterCursor) = ZIO.accessM[AbsenceRepo](_.get[Service].getFromByCursor(cursor))
 
-  @JsonCodec case class GetCursor(by: EmployeeId, startAt: Int, maxResults: Int)
-  @JsonCodec case class GetAfterCursor(from: Option[AbsenceId], startAt: Int, maxResults: Int)
+  case class GetCursor(by: EmployeeId, startAt: Int, maxResults: Int)
+  case class GetAfterCursor(from: Option[AbsenceId], startAt: Int, maxResults: Int)
 }

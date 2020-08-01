@@ -39,7 +39,7 @@ object DbCachedEmployeeRepo {
     }
     .toLayer
 
-  object Sql {
+  object Sql extends DbEntitiesEncoding {
     val migrations = List(sql"""CREATE TABLE Employee(
 employeeId VARCHAR(100) PRIMARY KEY NOT NULL,
 name VARCHAR(100) NOT NULL,

@@ -26,7 +26,7 @@ object DbAbsenceQueueRepo {
     }
     .toLayer
 
-  object Sql {
+  object Sql extends DbEntitiesEncoding {
     val migrations: Migrations = List(
       sql"""CREATE TABLE AbsenceQueue(
 absenceId VARCHAR(100) PRIMARY KEY NOT NULL,

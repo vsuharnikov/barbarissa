@@ -2,9 +2,9 @@ package com.github.vsuharnikov.barbarissa.backend.employee.app
 
 import java.time.LocalDate
 
-import io.circe.generic.JsonCodec
+import io.circe.generic.extras.ConfiguredJsonCodec
 
-@JsonCodec case class HttpV0AbsenceAppointment(
+@ConfiguredJsonCodec case class HttpV0AbsenceAppointment(
     subject: String,
     description: String,
     startDate: LocalDate,

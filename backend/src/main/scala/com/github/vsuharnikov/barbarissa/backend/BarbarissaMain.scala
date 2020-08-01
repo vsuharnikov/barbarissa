@@ -18,7 +18,7 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchang
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
-import org.http4s.Uri
+import org.http4s.{HttpApp, HttpRoutes, Uri}
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -28,6 +28,7 @@ import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
 import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
+import org.http4s.server.middleware.{RequestId, RequestLogger, ResponseLogger}
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
@@ -177,7 +178,7 @@ object BarbarissaMain extends App {
       val s = SwaggerSupport[AppTask]
       import s._
 
-      val middleware = createRhoMiddleware(
+      val rhoMiddleware = createRhoMiddleware(
         apiInfo = Info(title = "Barbarissa Backend", version = Version.VersionString),
         apiPath = TypedPath(PathMatch("api")) / "docs" / "swagger.json",
         //          swaggerFormats = DefaultSwaggerFormats
@@ -193,12 +194,24 @@ object BarbarissaMain extends App {
       )
 
       // TODO appenvironment layer? huh
-      val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(middleware)).orNotFound
+      val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(rhoMiddleware)).orNotFound
+
+      val middleware: HttpApp[AppTask] => HttpApp[AppTask] = {
+        { http: HttpApp[AppTask] =>
+          RequestId.httpApp(http)
+        } andThen { http: HttpApp[AppTask] =>
+          RequestLogger.httpApp(logHeaders = true, logBody = true)(http)
+        } andThen { http: HttpApp[AppTask] =>
+          ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
+        }
+      }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
       BlazeServerBuilder[AppTask](rts.platform.executor.asEC)
         .bindHttp(restApiConfig.port, restApiConfig.host)
-        .withHttpApp(httpApp)
+        .withHttpApp {
+          middleware(httpApp)
+        }
         .serve
         .compile[AppTask, AppTask, cats.effect.ExitCode]
         .drain

@@ -14,7 +14,9 @@
     <logger name="javax.management" level="INFO"/>
 
     <!-- HTTP -->
-    <logger name="org.http4s" level="INFO"/>
+    <logger name="org.http4s" level="WARN"/>
+    <logger name="org.http4s.server.middleware.RequestLogger" level="INFO"/>
+    <logger name="org.http4s.server.middleware.ResponseLogger" level="INFO"/>
 
     <!-- DOCX -->
     <logger name="com.deepoove.poi.resolver" level="WARN"/>

@@ -6,28 +6,31 @@ import java.time.format.{DateTimeFormatter, FormatStyle, TextStyle}
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-import cats.Applicative
+import cats.syntax.applicative._
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee._
+import com.github.vsuharnikov.barbarissa.backend.employee.app.EmployeeHttpApiRoutes.FailFast
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
-import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.app.{HttpSearchCursor, JsonSupport, ListResponse, RoutesParsers}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.error.ForwardError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{Inflection, ReportService, error => domainError}
+import org.http4s.Status.InternalServerError
+import org.http4s.{Response, Status}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.rho.RhoRoutes
+import org.http4s.rho.Result.BaseResult
+import org.http4s.rho.{Result, RhoRoutes}
 import org.http4s.rho.swagger.SwaggerSupport
-import zio.config.config
 import zio.interop.catz._
-import zio.{Has, RIO, ZIO}
+import zio.{Has, RIO, URIO, ZIO}
 
 class EmployeeHttpApiRoutes[
     R <: Has[EmployeeHttpApiRoutes.Config] with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonSupport[RIO[R, *]] {
-  type HttpIO[A] = RIO[R, A]
+  type HttpIO[A]   = RIO[R, A]
+  type HttpURIO[A] = URIO[R, A]
 
   private val locale        = Locale.forLanguageTag("ru")
   private val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(new Locale("ru"))
@@ -42,68 +45,75 @@ class EmployeeHttpApiRoutes[
     "Gets an employee by id" **
       "employee" @@
         GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { id: EmployeeId =>
-      EmployeeRepo
-        .get(id)
-        .map {
-          case Some(x) => Ok(httpEmployeeFrom(x))
-          case None    => NotFound(s"Can't find an employee with id=$id") // TODO
-        }
+      handleErrors {
+        EmployeeRepo
+          .get(id)
+          .flatMap {
+            case Some(x) => Ok(httpEmployeeFrom(x))
+            case None    => NotFound(s"Can't find an employee with id=$id") // TODO
+          }
+      }
     }
 
     "Updates an employee by id" **
       "employee" @@
         PATCH / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") ^ circeJsonDecoder[HttpV0UpdateEmployee] |>> {
       (id: EmployeeId, api: HttpV0UpdateEmployee) =>
-        val r = for {
-          orig <- EmployeeRepo.get(id)
-          orig <- orig match {
-            case Some(x) => ZIO.succeed(x)
-            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          }
-          _       <- EmployeeRepo.update(draft(orig, api))
-          updated <- EmployeeRepo.get(id)
-          updated <- updated match {
-            case Some(x) => ZIO.succeed(x)
-            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          }
-        } yield updated
-
-        r.map(x => Ok(httpEmployeeFrom(x)))
+        handleErrors {
+          for {
+            orig <- EmployeeRepo.get(id)
+            orig <- orig match {
+              case Some(x) => ZIO.succeed(x)
+              case None    => ZIO.fail(new FailFast(Status.NotFound, s"Employee '$id' not found"))
+            }
+            _       <- EmployeeRepo.update(draft(orig, api))
+            updated <- EmployeeRepo.get(id)
+            updated <- updated match {
+              case Some(x) => ZIO.succeed(x)
+              case None    => ZIO.fail(new FailFast(Status.NotFound, s"Employee '$id' not found after update"))
+            }
+            r <- Ok(httpEmployeeFrom(updated))
+          } yield r
+        }
     }
 
     "Gets an employee's absences" **
       "absence" @@
         GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") / "absence" +? param[Option[HttpSearchCursor]]("cursor") |>> {
       (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
-        for {
-          absences       <- AbsenceRepo.getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
-          absenceReasons <- AbsenceReasonRepo.all
-          r <- {
-            val (as, nextCursor) = absences
-            val ps               = as.map(a => (a, absenceReasons(a.reasonId))) // TODO
-            Ok(
-              ListResponse(
-                ps.map(Function.tupled(httpAbsenceFrom)),
-                nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))
-              ))
-          }
-        } yield r
+        handleErrors {
+          for {
+            absences       <- AbsenceRepo.getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
+            absenceReasons <- AbsenceReasonRepo.all
+            r <- {
+              val (as, nextCursor) = absences
+              val ps               = as.map(a => (a, absenceReasons(a.reasonId))) // TODO
+              Ok(
+                ListResponse(
+                  ps.map(Function.tupled(httpAbsenceFrom)),
+                  nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))
+                ))
+            }
+          } yield r
+        }
     }
 
-    "Gets an employee's absence by id" **
+    "Gets an absence by id" **
       "absence" @@
         GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") |>> { (aid: AbsenceId) =>
-      for {
-        absence <- AbsenceRepo.get(aid).flatMap {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-        absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-        r             <- Ok(httpAbsenceFrom(absence, absenceReason))
-      } yield r
+      handleErrors {
+        for {
+          absence <- AbsenceRepo.get(aid).flatMap {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          r <- Ok(httpAbsenceFrom(absence, absenceReason))
+        } yield r
+      }
     }
 
 //    "Generates a claim for employee's absence" **
@@ -154,82 +164,87 @@ class EmployeeHttpApiRoutes[
     "Gets an appointment for employee's absence" **
       "appointment" @@
         GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (aid: AbsenceId) =>
-      val r = for {
-        absence <- AbsenceRepo.get(aid).flatMap {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-        maybeAppointment <- {
-          val searchFilter = SearchFilter(
-            start = absence.from,
-            end = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.get(searchFilter)
-        }
-        appointment <- maybeAppointment match {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-      } yield appointment
-
-      r.map(x => Ok(httpAbsenceAppointmentFrom(x)))
+      handleErrors {
+        for {
+          absence <- AbsenceRepo.get(aid).flatMap {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          maybeAppointment <- {
+            val searchFilter = SearchFilter(
+              start = absence.from,
+              end = absence.from.plusDays(absence.daysQuantity),
+              serviceMark = absence.absenceId.asString
+            )
+            AbsenceAppointmentService.get(searchFilter)
+          }
+          appointment <- maybeAppointment match {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          r <- Ok(httpAbsenceAppointmentFrom(appointment))
+        } yield r
+      }
     }
 
     "Places an appointment for employee's absence" **
       "appointment" @@
         PUT / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (aid: AbsenceId) =>
-      val r = for {
-        absence <- AbsenceRepo.get(aid).flatMap {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-        employee <- EmployeeRepo.get(absence.employeeId).flatMap {
-          case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
-          case Some(x) => ZIO.succeed(x)
-        }
-        has <- {
-          val searchFilter = SearchFilter(
-            start = absence.from,
-            end = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.has(searchFilter)
-        }
-        _ <- ZIO.when(!has) {
-          val absenceAppointment = AbsenceAppointment(
-            subject = s"Ухожу в отпуск ${employee.localizedName.get}",
-            description = "",
-            startDate = absence.from,
-            endDate = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.add(absenceAppointment)
-        }
-      } yield has
-
-      r.map {
-        case false => Ok("")
-        case true  => Created("")
+      handleErrors {
+        for {
+          absence <- AbsenceRepo.get(aid).flatMap {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          employee <- EmployeeRepo.get(absence.employeeId).flatMap {
+            case None    => ZIO.fail(ForwardError(domainError.RepoRecordNotFound))
+            case Some(x) => ZIO.succeed(x)
+          }
+          has <- {
+            val searchFilter = SearchFilter(
+              start = absence.from,
+              end = absence.from.plusDays(absence.daysQuantity),
+              serviceMark = absence.absenceId.asString
+            )
+            AbsenceAppointmentService.has(searchFilter)
+          }
+          _ <- ZIO.when(!has) {
+            val absenceAppointment = AbsenceAppointment(
+              subject = s"Ухожу в отпуск ${employee.localizedName.get}",
+              description = "",
+              startDate = absence.from,
+              endDate = absence.from.plusDays(absence.daysQuantity),
+              serviceMark = absence.absenceId.asString
+            )
+            AbsenceAppointmentService.add(absenceAppointment)
+          }
+          r <- if (has) Ok("") else Created("")
+        } yield r
       }
     }
 
     "Add an item to the queue" **
       "queue" @@
         POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[AbsenceQueueItem] |>> { draft: AbsenceQueueItem =>
-      AbsenceQueue.add(List(draft)).as(Ok("Added"))
+      handleErrors {
+        AbsenceQueue.add(List(draft)) *> Ok("Added")
+      }
     }
 
     "Refreshes the queue" **
       "processing" @@
         POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
-      ProcessingService.refreshQueue.as(Ok(""))
+      handleErrors {
+        ProcessingService.refreshQueue *> Ok("")
+      }
     }
 
     "Process items in the queue" **
       "processing" @@
         POST / "api" / "v0" / "processing" / "process" |>> {
-      ProcessingService.process.as(Ok("Processed"))
+      handleErrors {
+        ProcessingService.process *> Ok("Processed")
+      }
     }
   }
 
@@ -273,9 +288,23 @@ class EmployeeHttpApiRoutes[
 
   private def toSinGenDateStr(x: LocalDate): String = s"${x.getDayOfMonth} ${x.getMonth.getDisplayName(TextStyle.FULL, locale)} ${x.getYear}"
   private def toDateStr(x: LocalDate): String       = dateFormatter.format(x)
+
+  // TODO https://typelevel.org/blog/2018/08/25/http4s-error-handling-mtl.html
+  private def handleErrors(r: HttpIO[Result.BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] = r.foldM(
+    {
+      case x: FailFast => Result(Response[HttpIO](x.status).withEntity(x.message)).pure[HttpURIO]
+      case x           => Result(Response[HttpIO](InternalServerError).withEntity(Option(x.getMessage).getOrElse(x.getClass.getName))).pure[HttpURIO]
+    },
+    x => x.pure[HttpURIO]
+  )
 }
 
 object EmployeeHttpApiRoutes {
   case class TemplatesConfig(rootDir: File)
   case class Config(templates: TemplatesConfig)
+
+  class FailFast(val status: Status, val message: String) extends RuntimeException(message, null, true, false)
+  object FailFast {
+    def apply(status: Status, message: String): FailFast = new FailFast(status, message)
+  }
 }

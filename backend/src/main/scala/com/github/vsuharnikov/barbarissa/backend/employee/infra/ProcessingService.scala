@@ -39,24 +39,20 @@ object ProcessingService {
   private val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(new Locale("ru"))
 
   val live = ZLayer.fromFunction[Dependencies, Service] { env =>
-    val config                    = env.get[Config]
-    val employeeRepo              = env.get[EmployeeRepo.Service]
-    val absenceRepo               = env.get[AbsenceRepo.Service]
-    val reasonRepo                = env.get[AbsenceReasonRepo.Service]
-    val queueRepo                 = env.get[AbsenceQueue.Service]
-    val absenceAppointmentService = env.get[AbsenceAppointmentService.Service]
-    val reportService             = env.get[ReportService.Service]
-    val mailService               = env.get[MailService.Service]
+    val config = env.get[Config]
 
     new Service {
       override def refreshQueue: Task[Unit] =
-        queueRepo.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10)))
+        AbsenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10))).provide(env)
 
       override def process: Task[Unit] =
-        queueRepo.getUncompleted(10).flatMap { xs =>
-          if (xs.isEmpty) Task.unit
-          else processMany(xs) // *> process // ignore those who failed on a previous step
-        }
+        AbsenceQueue
+          .getUncompleted(10)
+          .flatMap { xs =>
+            if (xs.isEmpty) ZIO.unit
+            else processMany(xs) // *> process // ignore those who failed on a previous step
+          }
+          .provide(env)
 
       private def processMany(xs: List[AbsenceQueueItem]): Task[Unit] = Task.foreach(xs)(processOne).unit
 
@@ -72,33 +68,33 @@ object ProcessingService {
                 case Some(x) => ZIO.succeed(x)
                 case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
               }
-              appointmentCreated <- Task
+              appointmentCreated <- ZIO
                 .when(!x.appointmentCreated) {
-                  sendAppointment(employee, absence)
+                  createAppointment(employee, absence)
                 }
                 .as(true)
-                .catchAll(_ => Task.succeed(false))
-              claimSent <- Task
+                .catchAll(_ => ZIO.succeed(false))
+              claimSent <- ZIO
                 .when(!x.claimSent) {
                   sendClaim(employee, absence)
                 }
                 .as(true)
-                .catchAll(_ => Task.succeed(false))
-              _ <- Task.when(appointmentCreated || claimSent) {
+                .catchAll(_ => ZIO.succeed(false))
+              _ <- ZIO.when(appointmentCreated || claimSent) {
                 val draft = x.copy(
                   done = appointmentCreated && claimSent,
                   appointmentCreated = appointmentCreated,
                   claimSent = claimSent,
                   retries = x.retries + 1
                 )
-                queueRepo.update(draft)
+                AbsenceQueue.update(draft)
               }
             } yield ()
           }
           .provide(env)
 
       private def sendClaim(employee: Employee, absence: Absence): Task[Unit] = {
-        val r = for {
+        for {
           absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
             case Some(x) => ZIO.succeed(x)
             case None    => ZIO.fail(ForwardError(RepoRecordNotFound))
@@ -119,7 +115,7 @@ object ProcessingService {
             val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO
             ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
           }
-          _ <- mailService.send(
+          _ <- MailService.send(
             to = EmailAddress(employee.email),
             subject = "Заявление на отпуск",
             bodyText = "Подпишите и отправьте в HR",
@@ -128,20 +124,16 @@ object ProcessingService {
             )
           )
         } yield ()
+      }.provide(env)
 
-        r.provide(env)
-      }
-
-      private def sendAppointment(employee: Employee, absence: Absence): Task[Unit] = {
-        val r = for {
-          has <- {
-            val searchFilter = SearchFilter(
+      private def createAppointment(employee: Employee, absence: Absence): Task[Unit] = {
+        for {
+          has <- AbsenceAppointmentService.has(
+            SearchFilter(
               start = absence.from,
               end = absence.from.plusDays(absence.daysQuantity),
               serviceMark = absence.absenceId.asString
-            )
-            AbsenceAppointmentService.has(searchFilter)
-          }
+            ))
           _ <- ZIO.when(!has) {
             val absenceAppointment = AbsenceAppointment(
               subject = s"Ухожу в отпуск ${employee.localizedName.get}",
@@ -153,27 +145,24 @@ object ProcessingService {
             AbsenceAppointmentService.add(absenceAppointment)
           }
         } yield ()
-        r.provide(env)
-      }
+      }.provide(env)
 
       // TODO ZStream
-      private def paginatedLoop(cursor: GetAfterCursor): Task[Unit] =
+      private def paginatedLoop(cursor: GetAfterCursor): Task[Unit] = {
         for {
-          r          <- absenceRepo.getFromByCursor(cursor)
-          reasonsMap <- reasonRepo.all
+          r          <- AbsenceRepo.getFromByCursor(cursor)
+          reasonsMap <- AbsenceReasonRepo.all
           _ <- {
             val (unprocessed, nextCursor) = r
             val xs = unprocessed.view.map { a =>
               toUnprocessed(a, reasonsMap(a.reasonId)) // TODO
             }.toList
 
-            if (xs.isEmpty) Task.unit
-            else {
-              val draftLastKnown = unprocessed.last.absenceId
-              queueRepo.add(xs) *> Task.foreach(nextCursor)(paginatedLoop)
-            }
+            if (xs.isEmpty) ZIO.unit
+            else AbsenceQueue.add(xs) *> ZIO.foreach(nextCursor)(paginatedLoop)
           }
         } yield ()
+      }.provide(env)
     }
   }
 

@@ -1,12 +1,14 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange
 
-import java.io.IOException
 import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceAppointment, AbsenceAppointmentService}
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
+import microsoft.exchange.webservices.data.core.exception.dns.DnsException
+import microsoft.exchange.webservices.data.core.exception.http.{EWSHttpException, HttpErrorException}
+import microsoft.exchange.webservices.data.core.exception.service.remote.{CreateAttachmentException, ServiceRemoteException, ServiceRequestException, ServiceResponseException}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
 import microsoft.exchange.webservices.data.core.service.item.{Appointment, Item}
 import microsoft.exchange.webservices.data.core.service.schema.{AppointmentSchema, FolderSchema}
@@ -17,10 +19,10 @@ import microsoft.exchange.webservices.data.property.definition.ExtendedPropertyD
 import microsoft.exchange.webservices.data.search.filter.SearchFilter
 import microsoft.exchange.webservices.data.search.filter.SearchFilter.SearchFilterCollection
 import microsoft.exchange.webservices.data.search.{FindItemsResults, FolderView, ItemView}
+import zio._
 import zio.blocking.{Blocking, effectBlockingIO}
 import zio.clock.Clock
 import zio.duration.Duration
-import zio._
 
 import scala.jdk.CollectionConverters._
 
@@ -53,8 +55,16 @@ object MsExchangeAbsenceAppointmentService {
     .accessM[Dependencies] { env =>
       val config = env.get[Config]
       val es     = env.get[ExchangeService]
-      val retryPolicy: Schedule[Any, Throwable, Unit] =
-        (Schedule.recurs(config.retryPolicy.recur) && Schedule.spaced(config.retryPolicy.space)).unit.provide(env)
+      val retryPolicy: Schedule[Any, Throwable, Unit] = {
+        Schedule.recurs(config.retryPolicy.recur) &&
+        Schedule.spaced(config.retryPolicy.space) &&
+        Schedule.doWhile[Throwable] {
+          case _: EWSHttpException | _: HttpErrorException | _: DnsException | _: CreateAttachmentException | _: ServiceRemoteException |
+              _: ServiceRequestException | _: ServiceResponseException =>
+            true
+          case _ => false
+        }
+      }.unit.provide(env)
 
       for {
         calendarFolder <- effectBlockingIO {

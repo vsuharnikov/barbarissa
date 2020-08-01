@@ -1,6 +1,5 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
-import cats.syntax.apply._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData}
 import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
@@ -8,7 +7,6 @@ import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonSupport
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.Sex
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import zio.{Task, ZLayer}
-import zio.interop.catz._
 
 object JiraEmployeeRepo {
   val live = ZLayer.fromService[JiraApi.Service, EmployeeRepo.Service] { api =>
@@ -27,10 +25,9 @@ object JiraEmployeeRepo {
       )
 
       override def get(by: EmployeeId): Task[Option[Employee]] =
-        (
-          api.getUserBasicData(by.asString),
-          api.getUserExtendedData(by.asString).map(_.getOrElse(JiraExtendedUserData.empty))
-        ).mapN(toDomain)
+        api.getUserBasicData(by.asString) <&>
+          api.getUserExtendedData(by.asString).map(_.getOrElse(JiraExtendedUserData.empty)) map
+          Function.tupled(toDomain)
     }
   }
 

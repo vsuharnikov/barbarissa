@@ -5,6 +5,8 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
+import cats.Monad
+import cats.data.Kleisli
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
@@ -18,7 +20,6 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchang
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
-import org.http4s.{HttpApp, HttpRoutes, Uri}
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -28,7 +29,9 @@ import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
 import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
-import org.http4s.server.middleware.{RequestId, RequestLogger, ResponseLogger}
+import org.http4s.server.middleware.{RequestId, ResponseLogger}
+import org.http4s.util.CaseInsensitiveString
+import org.http4s._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
@@ -207,20 +210,48 @@ object BarbarissaMain extends App {
         )
       )
 
-      // TODO appenvironment layer? huh
+      val log = rts.environment.get[Logger[String]]
+
+      // TODO AppEnvironment layer? huh
       val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(rhoMiddleware)).orNotFound
 
+      val redactHeadersWhen = Headers.SensitiveHeaders.contains _
+
+      val loggerNameBase           = "org.http4s.server.middleware".split('.').toList // HACK
+      val requestLoggerAnnotation  = LogAnnotation.Name(loggerNameBase ::: "RequestLogger" :: Nil)
+      val responseLoggerAnnotation = LogAnnotation.Name(loggerNameBase ::: "ResponseLogger" :: Nil)
+
+      // TODO move to routes and compose with an error handling?
       val middleware: HttpApp[AppTask] => HttpApp[AppTask] = {
         { http: HttpApp[AppTask] =>
           RequestId.httpApp(http)
-        } andThen { http: HttpApp[AppTask] =>
-          RequestLogger.httpApp(logHeaders = true, logBody = true)(http)
-        } andThen { http: HttpApp[AppTask] =>
-          ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
+        } compose { http: HttpApp[AppTask] =>
+          WrapMiddleware[AppTask, AppTask](http) { (req, h) =>
+            val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
+            log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
+              for {
+                // TODO Why the standard RequestLogger does not receive RequestId? Probably Concurrent is a root cause
+                _ <- org.http4s.internal.Logger.logMessage[AppTask, Request[AppTask]](req)(
+                  logHeaders = true,
+                  logBody = true,
+                  redactHeadersWhen
+                ) { x =>
+                  log.locally(requestLoggerAnnotation) { log.info(x) }
+                }
+                res <- h()
+              } yield res
+            }
+          }
+        } compose { http: HttpApp[AppTask] =>
+          ResponseLogger.httpApp[AppTask, Request[AppTask]](
+            logHeaders = true,
+            logBody = false,
+            logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.info(x) }).some,
+            redactHeadersWhen = redactHeadersWhen
+          )(http)
         }
       }
 
-      // TODO MDC logging
       val restApiConfig = rts.environment.get[HttpApiConfig]
       BlazeServerBuilder[AppTask](rts.platform.executor.asEC)
         .bindHttp(restApiConfig.port, restApiConfig.host)
@@ -229,6 +260,14 @@ object BarbarissaMain extends App {
         .compile[AppTask, AppTask, cats.effect.ExitCode]
         .drain
     }
+
+  // TODO refactor
+  object WrapMiddleware {
+    def apply[F[_]: Monad, G[_]](http: Http[F, G])(wrap: (Request[G], () => F[Response[G]]) => F[Response[G]]): Http[F, G] =
+      Kleisli { req: Request[G] =>
+        wrap(req, () => http(req))
+      }
+  }
 
   private def showWithStackTrace(x: Throwable): String = {
     val sw = new StringWriter

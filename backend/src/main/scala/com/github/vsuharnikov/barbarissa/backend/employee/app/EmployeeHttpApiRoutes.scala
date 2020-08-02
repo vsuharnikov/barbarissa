@@ -298,9 +298,7 @@ class EmployeeHttpApiRoutes[
   private def toDateStr(x: LocalDate): String       = dateFormatter.format(x)
 
   private def midd(req: Request[HttpIO])(f: => HttpIO[Result.BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] =
-    withRequestId(req) {
-      handleErrors(f)
-    }
+    handleErrors(f)
 
   // TODO https://typelevel.org/blog/2018/08/25/http4s-error-handling-mtl.html
   private def handleErrors(r: HttpIO[Result.BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] = r.foldM(
@@ -310,11 +308,6 @@ class EmployeeHttpApiRoutes[
     },
     x => x.pure[HttpURIO]
   )
-
-  private def withRequestId(req: Request[HttpIO])(f: => ZIO[R, Nothing, BaseResult[HttpIO]]): ZIO[R, Nothing, BaseResult[HttpIO]] = {
-    val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
-    log.locally(_.annotate(requestIdLogAnnotation, requestId))(f)
-  }
 }
 
 object EmployeeHttpApiRoutes {

@@ -5,10 +5,20 @@ import java.net.URI
 import microsoft.exchange.webservices.data.autodiscover.IAutodiscoverRedirectionUrl
 import microsoft.exchange.webservices.data.core.ExchangeService
 import microsoft.exchange.webservices.data.core.enumeration.misc.{ExchangeVersion, TraceFlags}
+import microsoft.exchange.webservices.data.core.exception.dns.DnsException
+import microsoft.exchange.webservices.data.core.exception.http.{EWSHttpException, HttpErrorException}
+import microsoft.exchange.webservices.data.core.exception.service.remote.{
+  CreateAttachmentException,
+  ServiceRemoteException,
+  ServiceRequestException,
+  ServiceResponseException
+}
 import microsoft.exchange.webservices.data.credential.WebCredentials
 import zio.blocking.{Blocking, effectBlockingIO}
+import zio.clock.Clock
+import zio.duration.Duration
 import zio.logging._
-import zio.{Has, ZIO}
+import zio.{Has, Schedule, ZIO}
 
 object MsExchangeService {
   case class Config(apiTarget: ApiTargetConfig, credentials: CredentialsConfig)
@@ -62,4 +72,18 @@ object MsExchangeService {
     override def autodiscoverRedirectionUrlValidationCallback(redirectionUrl: String): Boolean =
       redirectionUrl.toLowerCase.startsWith("https://")
   }
+
+  // TODO ExchangeService should have own wrapper with all required functionality.
+  // After this we can unite retry policy for all kinds of work.
+  case class RetryPolicyConfig(recur: Int, space: Duration)
+  def retryPolicy(config: RetryPolicyConfig): Schedule[Clock, Throwable, Unit] = {
+    Schedule.recurs(config.recur) &&
+    Schedule.spaced(config.space) &&
+    Schedule.doWhile[Throwable] {
+      case _: EWSHttpException | _: HttpErrorException | _: DnsException | _: CreateAttachmentException | _: ServiceRemoteException |
+          _: ServiceRequestException | _: ServiceResponseException =>
+        true
+      case _ => false
+    }
+  }.unit
 }

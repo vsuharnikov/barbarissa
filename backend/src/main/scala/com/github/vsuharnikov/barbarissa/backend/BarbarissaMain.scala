@@ -5,7 +5,6 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
-import cats.Monad
 import cats.data.Kleisli
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
@@ -16,10 +15,11 @@ import com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange.MsExcha
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchangeService
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
+import org.http4s._
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -31,7 +31,6 @@ import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.{RequestId, ResponseLogger}
 import org.http4s.util.CaseInsensitiveString
-import org.http4s._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
@@ -55,6 +54,7 @@ object BarbarissaMain extends App {
                            jira: JiraApi.Config,
                            msExchange: MsExchangeService.Config,
                            msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
+                           msExchangeMail: MsExchangeMailService.Config,
                            routes: EmployeeHttpApiRoutes.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
                            sqlite: SqliteDataSource.Config,
@@ -113,18 +113,20 @@ object BarbarissaMain extends App {
       mdcAnnotations = List(requestIdLogAnnotation)
     )
 
-    val httpClientLayer = loggingLayer ++ httpClient.toLayer >>> ZIO
-      .access[Has[Client[Task]] with Logging] { env =>
-        val client = env.get[Client[Task]]
-        Logger[Task](
-          logBody = true,
-          logHeaders = true,
-          logAction = Some(
-            (x: String) => log.info(x).provide(env)
-          )
-        )(client)
-      }
-      .toLayer
+    val httpClientLayer = loggingLayer ++ httpClient.toLayer >>> {
+      val loggerNameBase   = "org.http4s.client.middleware.Logger".split('.').toList
+      val loggerAnnotation = LogAnnotation.Name(loggerNameBase)
+      ZIO
+        .access[Has[Client[Task]] with Logging] { env =>
+          val client = env.get[Client[Task]]
+          Logger[Task](
+            logBody = true,
+            logHeaders = true,
+            logAction = ((x: String) => log.locally(loggerAnnotation) { log.debug(x) }.provide(env)).some
+          )(client)
+        }
+        .toLayer
+    }
 
     val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live ++ loggingLayer >>> SqliteDataSource.live
 
@@ -154,7 +156,8 @@ object BarbarissaMain extends App {
 
     val reportServiceLayer = DocxReportService.live
 
-    val mailServiceLayer = Blocking.live ++ msExchangeServiceLayer >>> MailService.live
+    val mailServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeMail) ++ Clock.live ++ Blocking.live ++
+      loggingLayer ++ msExchangeServiceLayer >>> MsExchangeMailService.live
 
     val processingServiceLayer = configLayer.narrow(_.barbarissa.backend.processing) ++ employeeRepoLayer ++
       absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
@@ -236,7 +239,7 @@ object BarbarissaMain extends App {
                   logBody = true,
                   redactHeadersWhen
                 ) { x =>
-                  log.locally(requestLoggerAnnotation) { log.info(x) }
+                  log.locally(requestLoggerAnnotation) { log.debug(x) }
                 }
                 res <- h()
               } yield res
@@ -246,7 +249,7 @@ object BarbarissaMain extends App {
           ResponseLogger.httpApp[AppTask, Request[AppTask]](
             logHeaders = true,
             logBody = false,
-            logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.info(x) }).some,
+            logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
             redactHeadersWhen = redactHeadersWhen
           )(http)
         }
@@ -263,7 +266,7 @@ object BarbarissaMain extends App {
 
   // TODO refactor
   object WrapMiddleware {
-    def apply[F[_]: Monad, G[_]](http: Http[F, G])(wrap: (Request[G], () => F[Response[G]]) => F[Response[G]]): Http[F, G] =
+    def apply[F[_], G[_]](http: Http[F, G])(wrap: (Request[G], () => F[Response[G]]) => F[Response[G]]): Http[F, G] =
       Kleisli { req: Request[G] =>
         wrap(req, () => http(req))
       }

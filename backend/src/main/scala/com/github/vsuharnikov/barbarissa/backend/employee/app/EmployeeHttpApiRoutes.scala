@@ -13,15 +13,15 @@ import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointm
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, ReportService}
-import org.http4s.{Request, Response}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, ReportService, Sex}
+import kantan.csv._
+import kantan.csv.ops._
 import org.http4s.Status.InternalServerError
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.Result.BaseResult
 import org.http4s.rho.swagger.SwaggerSupport
 import org.http4s.rho.{Result, RhoRoutes}
-import org.http4s.server.middleware.RequestId
-import org.http4s.util.CaseInsensitiveString
+import org.http4s.{EntityDecoder, Request, Response, Status}
 import zio.interop.catz._
 import zio.logging._
 import zio.{Has, RIO, URIO, ZIO}
@@ -76,6 +76,37 @@ class EmployeeHttpApiRoutes[
             r <- Ok(httpEmployeeFrom(updated))
           } yield r
         }
+    }
+
+    "Batch update for employees" **
+      "employee" @@
+        PATCH / "api" / "v0" / "employee" |>> { (req: Request[HttpIO]) =>
+      // midd(req) { // TODO
+      req.decodeWith(EntityDecoder.text[HttpIO], strict = true) { x =>
+        val reader = x.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
+
+        // TODO show invalid
+        val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
+          case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
+          case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
+        }
+
+        ZIO.foreach(valid) { csv =>
+          for {
+            orig <- EmployeeRepo.search(csv.email)
+            _ <- ZIO.foreach(orig) { orig =>
+              EmployeeRepo.update(
+                orig.copy(
+                  localizedName = csv.name.some,
+                  companyId = csv.companyId.some,
+                  position = csv.position.some,
+                  sex = csv.sex.some
+                ))
+            }
+          } yield ()
+        } *> ZIO.succeed(Response[HttpIO](Status.Ok).withEntity("Ok"))
+      }
+//      }
     }
 
     "Gets an employee's absences" **
@@ -308,6 +339,19 @@ class EmployeeHttpApiRoutes[
     },
     x => x.pure[HttpURIO]
   )
+
+  case class CsvEmployee(name: String, position: String, email: String, sex: Sex, companyId: CompanyId)
+  object CsvEmployee {
+    implicit val csvEmployeeRowDecoder: RowDecoder[CsvEmployee] = RowDecoder.ordered {
+      (name: String, position: String, email: String, rawSex: String, rawCompanyId: String) =>
+        val sex = rawSex match {
+          case "МУЖ" => Sex.Male
+          case "ЖЕН" => Sex.Female
+          case x     => throw new RuntimeException(s"Can't parse sex: $x")
+        }
+        CsvEmployee(name, position, email, sex, CompanyId(rawCompanyId))
+    }
+  }
 }
 
 object EmployeeHttpApiRoutes {

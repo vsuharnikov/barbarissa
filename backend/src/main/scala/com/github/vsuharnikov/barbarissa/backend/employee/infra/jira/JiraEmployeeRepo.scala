@@ -4,10 +4,11 @@ import com.github.vsuharnikov.barbarissa.backend.employee.app.JsonEntitiesEncodi
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData}
 import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.Sex
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Sex}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import zio.logging.{Logging, log}
 import zio.{Has, Task, ZIO, ZLayer}
+import cats.syntax.option._
 
 object JiraEmployeeRepo {
   type Dependencies = Logging with JiraApi
@@ -38,6 +39,24 @@ object JiraEmployeeRepo {
               JiraApi.getUserBasicData(by.asString) <&>
               JiraApi.getUserExtendedData(by.asString).map(_.getOrElse(JiraExtendedUserData.empty)) map
               Function.tupled(toDomain)
+          }.provide(env)
+
+          override def search(byEmail: String): Task[Option[Employee]] = {
+            log.info(s"Searching '$byEmail'") *> {
+              for {
+                basic <- JiraApi.searchUsers(byEmail)
+                basic <- basic match {
+                  case x :: Nil => ZIO.succeed(x.some)
+                  case Nil      => ZIO.none
+                  case xs =>
+                    ZIO.fail(DomainError.UnhandledError(s"Multiple users have same email: ${xs.map(_.name).mkString(", ")}"))
+                }
+                extended <- basic match {
+                  case Some(x) => JiraApi.getUserExtendedData(x.name)
+                  case None    => ZIO.none
+                }
+              } yield toDomain(basic, extended.getOrElse(JiraExtendedUserData.empty))
+            }
           }.provide(env)
         }
       }

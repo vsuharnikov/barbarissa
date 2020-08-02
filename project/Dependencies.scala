@@ -24,6 +24,7 @@ object Dependencies {
     val classGraph      = "4.8.87"
     val doobie          = "0.9.0"
     val sqlite          = "3.32.3.1"
+    val kantan             = "0.6.1"
   }
 
   val fp = Seq(
@@ -52,6 +53,10 @@ object Dependencies {
   val db = Seq(
     "org.tpolecat" %% "doobie-core" % versionOf.doobie,
     "org.xerial"   % "sqlite-jdbc"  % versionOf.sqlite
+  )
+
+  val csv = Seq(
+    "com.nrinaudo" %% "kantan.csv" % versionOf.kantan
   )
 
   val logs = Seq(

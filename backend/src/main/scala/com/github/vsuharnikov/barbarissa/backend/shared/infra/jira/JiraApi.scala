@@ -21,6 +21,7 @@ import zio.logging._
 object JiraApi extends Serializable {
   trait Service extends Serializable {
     def getUserBasicData(username: String): Task[Option[JiraBasicUserData]]
+    def searchUsers(email: String): Task[List[JiraBasicUserData]]
 
     def setUserExtendedData(username: String, draft: JiraExtendedUserData): Task[Unit]
     def getUserExtendedData(username: String): Task[Option[JiraExtendedUserData]]
@@ -49,6 +50,9 @@ object JiraApi extends Serializable {
         override def getUserBasicData(username: String): Task[Option[JiraBasicUserData]] =
           get[JiraBasicUserData](jiraUri.userBasicData(username))
 
+        override def searchUsers(email: String): Task[List[JiraBasicUserData]] =
+          getMany[JiraBasicUserData](jiraUri.searchUser(email))
+
         override def setUserExtendedData(username: String, draft: JiraExtendedUserData): Task[Unit] = {
           val uri = jiraUri.userExtendedData(username)
           val req = Request[Task](PUT, uri, headers = commonHeaders)
@@ -73,6 +77,9 @@ object JiraApi extends Serializable {
         private def get[T](uri: Uri)(implicit ed: EntityDecoder[Task, T]): Task[Option[T]] =
           run(Request[Task](uri = uri, headers = commonHeaders))(_.as[T])
 
+        private def getMany[T](uri: Uri)(implicit ed: EntityDecoder[Task, List[T]]): Task[List[T]] =
+          runMany[T](Request[Task](uri = uri, headers = commonHeaders))(_.as[List[T]])
+
         private val remoteCallFailed = DomainError.RemoteCallFailed("Jira")
         private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[Option[T]] =
           client
@@ -83,6 +90,16 @@ object JiraApi extends Serializable {
               case x =>
                 if (x.status == Status.NotFound) Task.succeed(none)
                 else Task.fail(DomainError.UnhandledError("Jira call failed"))
+            }
+            .retry(retryPolicy)
+
+        private def runMany[T](req: Request[Task])(f: Response[Task] => Task[List[T]]): Task[List[T]] =
+          client
+            .run(req)
+            .use {
+              case Status.Successful(x)  => f(x)
+              case Status.ServerError(_) => Task.fail(remoteCallFailed)
+              case x                     => Task.fail(DomainError.UnhandledError("Jira call failed"))
             }
             .retry(retryPolicy)
 
@@ -100,6 +117,8 @@ object JiraApi extends Serializable {
 
   class JiraUri(restApi: Uri) {
     def userBasicData(username: String): Uri = restApi / "2" / "user" withQueryParams Map("username" -> username)
+
+    def searchUser(email: String): Uri = restApi / "2" / "user" / "search" withQueryParams Map("username" -> email)
 
     def userExtendedData(username: String): Uri = restApi / "2" / "user" / "properties" / "hr" withQueryParams Map("username" -> username)
 

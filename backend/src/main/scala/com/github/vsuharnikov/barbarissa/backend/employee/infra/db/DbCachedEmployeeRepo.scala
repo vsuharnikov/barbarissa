@@ -35,6 +35,18 @@ object DbCachedEmployeeRepo {
                 } yield r
               case r => ZIO.succeed(r)
             }
+
+          override def search(byEmail: String): Task[Option[Employee]] =
+            Sql.getByEmail(byEmail).transact(tr).flatMap {
+              case None =>
+                for {
+                  r <- underlying.search(byEmail)
+                  _ <- ZIO.foreach(r) { r =>
+                    Sql.update.run(r).transact(tr)
+                  }
+                } yield r
+              case r => ZIO.succeed(r)
+            }
         })
     }
     .toLayer
@@ -57,6 +69,11 @@ VALUES(?, ?, ?, ?, ?, ?, ?)""")
     def get(employeeId: String) = sql"""SELECT
 employeeId, name, email, localizedName, companyId, position, sex
 FROM Employee WHERE employeeId = $employeeId
+""".query[Employee].option
+
+    def getByEmail(email: String) = sql"""SELECT
+employeeId, name, email, localizedName, companyId, position, sex
+FROM Employee WHERE email = $email
 """.query[Employee].option
   }
 }

@@ -63,19 +63,23 @@ object ProcessingService {
                 case Some(x) => ZIO.succeed(x)
                 case None    => ZIO.fail(DomainError.NotFound("Absence", x.absenceId.asString))
               }
+              absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
+                case Some(x) => ZIO.succeed(x)
+                case None    => ZIO.fail(DomainError.NotFound("AbsenceReason", absence.reasonId.asString))
+              }
               employee <- EmployeeRepo.get(absence.employeeId).flatMap {
                 case Some(x) => ZIO.succeed(x)
                 case None    => ZIO.fail(DomainError.NotFound("Employee", absence.employeeId.asString))
               }
               appointmentCreated <- ZIO
                 .when(!x.appointmentCreated) {
-                  createAppointment(employee, absence)
+                  createAppointment(employee, absence, absenceReason)
                 }
                 .as(true)
                 .catchAll(_ => ZIO.succeed(false))
               claimSent <- ZIO
                 .when(!x.claimSent) {
-                  sendClaim(employee, absence)
+                  sendClaim(employee, absence, absenceReason)
                 }
                 .as(true)
                 .catchAll(_ => ZIO.succeed(false))
@@ -92,12 +96,8 @@ object ProcessingService {
           }
           .provide(env)
 
-      private def sendClaim(employee: Employee, absence: Absence): Task[Unit] = {
+      private def sendClaim(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] = {
         for {
-          absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
-            case Some(x) => ZIO.succeed(x)
-            case None    => ZIO.fail(DomainError.NotFound("AbsenceReason", absence.reasonId.asString))
-          }
           _ <- ZIO.foreach(absenceReason.needClaim) { claimType =>
             val absenceReasonSuffix = claimType match {
               case AbsenceClaimType.WithoutCompensation => "without-compensation"
@@ -118,7 +118,7 @@ object ProcessingService {
               }
               _ <- MailService.send(
                 to = EmailAddress(employee.email),
-                subject = "Заявление на отпуск",
+                subject = s"Заявление: ${absenceReason.name} с ${absence.from}",
                 bodyText = "Подпишите и отправьте в HR",
                 attachments = Map(
                   "claim.docx" -> report
@@ -129,7 +129,7 @@ object ProcessingService {
         } yield ()
       }.provide(env)
 
-      private def createAppointment(employee: Employee, absence: Absence): Task[Unit] = {
+      private def createAppointment(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] = {
         for {
           has <- AbsenceAppointmentService.has(
             SearchFilter(
@@ -139,7 +139,7 @@ object ProcessingService {
             ))
           _ <- ZIO.when(!has) {
             val absenceAppointment = AbsenceAppointment(
-              subject = s"Ухожу в отпуск ${employee.localizedName.get}",
+              subject = s"${employee.localizedName.get}: ${absenceReason.name}", // TODO Option.get
               description = "",
               startDate = absence.from,
               endDate = absence.from.plusDays(absence.daysQuantity),
@@ -158,7 +158,7 @@ object ProcessingService {
           _ <- {
             val (unprocessed, nextCursor) = r
             val xs = unprocessed.view.map { a =>
-              toUnprocessed(a, reasonsMap(a.reasonId)) // TODO
+              toUnprocessed(a, reasonsMap(a.reasonId)) // TODO Map.apply
             }.toList
 
             if (xs.isEmpty) ZIO.unit

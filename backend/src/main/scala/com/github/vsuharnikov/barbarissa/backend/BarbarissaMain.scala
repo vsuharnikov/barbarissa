@@ -5,7 +5,10 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
+import cats.ApplicativeError
 import cats.data.Kleisli
+import cats.effect.Sync
+import cats.implicits.catsSyntaxApplicativeId
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
@@ -13,13 +16,17 @@ import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
+import com.github.vsuharnikov.barbarissa.backend.shared.app.ApiError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
+import io.circe.{Decoder, Encoder}
+import org.http4s.Status.InternalServerError
 import org.http4s._
+import org.http4s.circe.{jsonEncoderOf, jsonOf}
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
@@ -81,7 +88,8 @@ object BarbarissaMain extends App {
     with ProcessingService
     with AbsenceQueue
 
-  private type AppTask[A] = RIO[AppEnvironment, A]
+  private type AppTask[A]  = RIO[AppEnvironment, A]
+  private type UAppTask[A] = URIO[AppEnvironment, A]
 
   override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
     val program = makeHttpClient.flatMap(makeProgram)
@@ -216,49 +224,51 @@ object BarbarissaMain extends App {
       val log = rts.environment.get[Logger[String]]
 
       // TODO AppEnvironment layer? huh
-      val httpApp = Router[AppTask]("/" -> new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(rhoMiddleware)).orNotFound
-
-      val redactHeadersWhen = Headers.SensitiveHeaders.contains _
-
+      val redactHeadersWhen        = Headers.SensitiveHeaders.contains _
       val loggerNameBase           = "org.http4s.server.middleware".split('.').toList // HACK
       val requestLoggerAnnotation  = LogAnnotation.Name(loggerNameBase ::: "RequestLogger" :: Nil)
       val responseLoggerAnnotation = LogAnnotation.Name(loggerNameBase ::: "ResponseLogger" :: Nil)
 
-      // TODO move to routes and compose with an error handling?
-      val middleware: HttpApp[AppTask] => HttpApp[AppTask] = {
-        { http: HttpApp[AppTask] =>
-          RequestId.httpApp(http)
-        } compose { http: HttpApp[AppTask] =>
-          WrapMiddleware[AppTask, AppTask](http) { (req, h) =>
-            val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
-            log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
-              for {
-                // TODO Why the standard RequestLogger does not receive RequestId? Probably Concurrent is a root cause
-                _ <- org.http4s.internal.Logger.logMessage[AppTask, Request[AppTask]](req)(
-                  logHeaders = true,
-                  logBody = true,
-                  redactHeadersWhen
-                ) { x =>
-                  log.locally(requestLoggerAnnotation) { log.debug(x) }
+      val routes = {
+        val routes = new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(rhoMiddleware)
+
+        val withResponseLogging = catchErrors(routes)
+
+        ResponseLogger.httpRoutes[AppTask, Request[AppTask]](
+          logHeaders = true,
+          logBody = false,
+          logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
+          redactHeadersWhen = redactHeadersWhen
+        )(withResponseLogging)
+      }
+
+      val httpApp: Kleisli[AppTask, Request[AppTask], Response[AppTask]] = {
+        val raw = Router[AppTask]("/" -> routes).orNotFound
+        val withRequestLogging = Kleisli { req: Request[AppTask] =>
+          val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
+          log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
+            for {
+              // TODO Why the standard RequestLogger does not receive RequestId? Probably Concurrent is a root cause
+              _ <- org.http4s.internal.Logger.logMessage[AppTask, Request[AppTask]](req)(
+                logHeaders = true,
+                logBody = true,
+                redactHeadersWhen
+              ) { x =>
+                log.locally(requestLoggerAnnotation) {
+                  log.debug(x)
                 }
-                res <- h()
-              } yield res
-            }
+              }
+              res <- raw(req)
+            } yield res
           }
-        } compose { http: HttpApp[AppTask] =>
-          ResponseLogger.httpApp[AppTask, Request[AppTask]](
-            logHeaders = true,
-            logBody = false,
-            logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
-            redactHeadersWhen = redactHeadersWhen
-          )(http)
         }
+        RequestId.httpApp[AppTask](withRequestLogging)
       }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
       BlazeServerBuilder[AppTask](rts.platform.executor.asEC)
         .bindHttp(restApiConfig.port, restApiConfig.host)
-        .withHttpApp(middleware(httpApp))
+        .withHttpApp(httpApp)
         .serve
         .compile[AppTask, AppTask, cats.effect.ExitCode]
         .drain
@@ -301,4 +311,16 @@ object BarbarissaMain extends App {
     _.asScala.map { case (k, v) => s"$k" -> s"$v" }.toMap
   )
   implicit val uriDescriptor: Descriptor[Uri] = Descriptor[String].xmap(Uri.unsafeFromString, _.renderString)
+
+  implicit def circeJsonDecoder[F[_], A: Decoder](implicit sync: Sync[F]): EntityDecoder[F, A] = jsonOf[F, A]
+  implicit def circeJsonEncoder[F[_], A: Encoder]: EntityEncoder[F, A]                         = jsonEncoderOf[F, A]
+
+  private def catchErrors[G[_], F[_], A](http: Kleisli[G, A, Response[F]])(implicit G: ApplicativeError[G, Throwable]): Kleisli[G, A, Response[F]] = {
+    Kleisli[G, A, Response[F]] { req =>
+      G.recover(http(req)) {
+        case x: ApiError => Response[F](x.status).withEntity(x.body)
+        case x           => Response[F](InternalServerError).withEntity(Option(x.getMessage).getOrElse(x.getClass.getName))
+      }
+    }
+  }
 }

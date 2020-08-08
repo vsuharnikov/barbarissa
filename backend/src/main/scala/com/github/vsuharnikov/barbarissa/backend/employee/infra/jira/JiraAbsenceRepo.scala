@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee.app.JsonEntitiesEncoding
+import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.{GetAfterCursor, GetCursor}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult, JiraSearchResultItem}

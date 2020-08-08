@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.app
+package com.github.vsuharnikov.barbarissa.backend.employee.app.entities
 
 import java.time.LocalDate
 

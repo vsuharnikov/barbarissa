@@ -2,7 +2,7 @@ package com.github.vsuharnikov.barbarissa.backend.shared.infra.jira
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
-import com.github.vsuharnikov.barbarissa.backend.employee.app.JsonEntitiesEncoding
+import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities._
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import io.circe.syntax._

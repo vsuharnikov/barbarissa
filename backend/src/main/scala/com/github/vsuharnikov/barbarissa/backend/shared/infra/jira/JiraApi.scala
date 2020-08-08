@@ -92,6 +92,7 @@ object JiraApi extends Serializable {
                 else Task.fail(DomainError.UnhandledError("Jira call failed"))
             }
             .retry(retryPolicy)
+            .provide(env)
 
         private def runMany[T](req: Request[Task])(f: Response[Task] => Task[List[T]]): Task[List[T]] =
           client
@@ -102,11 +103,12 @@ object JiraApi extends Serializable {
               case x                     => Task.fail(DomainError.UnhandledError("Jira call failed"))
             }
             .retry(retryPolicy)
+            .provide(env)
 
         private val retryPolicy: Schedule[Any, Throwable, Unit] = {
           Schedule.recurs(config.retryPolicy.recur) &&
           Schedule.spaced(config.retryPolicy.space) &&
-          Schedule.doWhile[Throwable] {
+          Schedule.recurWhile[Throwable] {
             case _: DomainError.UnhandledError => false
             case _                             => true
           }

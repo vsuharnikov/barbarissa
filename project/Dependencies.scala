@@ -7,11 +7,11 @@ object Dependencies {
     val cats            = "2.1.1"
     val monocle         = "2.0.5"
     val magnolia        = "0.16.0"
-    val zio             = "1.0.0-RC21-2"
-    val zioConfig       = "1.0.0-RC24"
-    val zioInteropCats  = "2.1.4.0-RC17"
-    val zioLogging      = "0.3.2"
-    val zioTestIntelliJ = "1.0.0-RC21-2"
+    val zio             = "1.0.0"
+    val zioConfig       = "1.0.0-RC26"
+    val zioInteropCats  = "2.1.4.0"
+    val zioLogging      = "0.4.0"
+    val zioTestIntelliJ = "1.0.0"
     val diffx           = "0.3.29"
     val slf4j           = "1.7.30"
     val logbackClassic  = "1.2.3"
@@ -23,8 +23,8 @@ object Dependencies {
     val newType         = "0.4.4"
     val classGraph      = "4.8.87"
     val doobie          = "0.9.0"
-    val sqlite          = "3.32.3.1"
-    val kantan             = "0.6.1"
+    val sqlite          = "3.32.3.2"
+    val kantan          = "0.6.1"
   }
 
   val fp = Seq(

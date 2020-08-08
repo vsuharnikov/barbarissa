@@ -13,7 +13,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{MailService, ReportService}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
@@ -101,7 +101,7 @@ object BarbarissaMain extends App {
             TypesafeConfigSource
               .fromTypesafeConfig(typesafeConfig)
               .flatMap { source =>
-                read(descriptor[GlobalConfig].mapKey(camelToKebab) from source).left.map(_.prettyPrint())
+                read(descriptor[GlobalConfig].mapKey(toKebabCase) from source).left.map(_.prettyPrint())
               }
           }
           .mapError(desc => new IllegalArgumentException(s"Can't parse config:\n$desc"))

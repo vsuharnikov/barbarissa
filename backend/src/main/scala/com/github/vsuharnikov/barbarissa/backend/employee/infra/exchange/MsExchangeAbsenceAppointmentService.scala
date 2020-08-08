@@ -66,12 +66,13 @@ object MsExchangeAbsenceAppointmentService {
           private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
 
           override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
-            has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).retry(retryPolicy)
+            has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).retry(retryPolicy).provide(env)
 
           override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
             internalGet(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
               .map(_.map(toAbsenceAppointment))
               .retry(retryPolicy)
+              .provide(env)
 
           override def add(appointment: AbsenceAppointment): Task[Unit] =
             effectBlockingIO(toAppointment(appointment).save(calendarFolder.getId))

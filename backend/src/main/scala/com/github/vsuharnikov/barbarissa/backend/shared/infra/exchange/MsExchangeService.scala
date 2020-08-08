@@ -79,7 +79,7 @@ object MsExchangeService {
   def retryPolicy(config: RetryPolicyConfig): Schedule[Clock, Throwable, Unit] = {
     Schedule.recurs(config.recur) &&
     Schedule.spaced(config.space) &&
-    Schedule.doWhile[Throwable] {
+    Schedule.recurWhile[Throwable] {
       case _: EWSHttpException | _: HttpErrorException | _: DnsException | _: CreateAttachmentException | _: ServiceRemoteException |
           _: ServiceRequestException | _: ServiceResponseException =>
         true

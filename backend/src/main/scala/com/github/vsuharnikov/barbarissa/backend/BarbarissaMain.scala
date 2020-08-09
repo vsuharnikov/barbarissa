@@ -147,7 +147,7 @@ object BarbarissaMain extends App {
 
     val employeeRepoLayer = {
       val underlyingLayer = loggingLayer ++ jiraApiLayer >>> JiraEmployeeRepo.live
-      transactorLayer ++ migrationRepoLayer ++ underlyingLayer >>> DbCachedEmployeeRepo.live
+      loggingLayer ++ transactorLayer ++ migrationRepoLayer ++ underlyingLayer >>> DbCachedEmployeeRepo.live
     }
 
     val absenceRepoLayer = loggingLayer ++ jiraApiLayer >>> JiraAbsenceRepo.live
@@ -167,8 +167,8 @@ object BarbarissaMain extends App {
     val mailServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeMail) ++ Clock.live ++ Blocking.live ++
       loggingLayer ++ msExchangeServiceLayer >>> MsExchangeMailService.live
 
-    val processingServiceLayer = configLayer.narrow(_.barbarissa.backend.processing) ++ employeeRepoLayer ++
-      absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
+    val processingServiceLayer = configLayer.narrow(_.barbarissa.backend.processing) ++ Clock.live ++ loggingLayer ++
+      employeeRepoLayer ++ absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
       reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
 
     val routesLayer = configLayer.narrow(_.barbarissa.backend.routes) ++ loggingLayer ++ employeeRepoLayer ++

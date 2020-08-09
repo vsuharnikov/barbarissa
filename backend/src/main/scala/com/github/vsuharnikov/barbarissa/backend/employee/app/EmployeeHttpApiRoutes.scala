@@ -273,7 +273,7 @@ class EmployeeHttpApiRoutes[
     "Process items in the queue" **
       "processing" @@
         POST / "api" / "v0" / "processing" / "process" |>> { (req: Request[HttpIO]) =>
-      ProcessingService.process *> Ok("Processed")
+      ProcessingService.processQueue *> Ok("Processed")
     }
   }
 

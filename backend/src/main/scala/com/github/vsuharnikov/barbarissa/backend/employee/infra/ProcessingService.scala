@@ -13,19 +13,25 @@ import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.MailService.EmailAddress
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.PadegInflection
+import zio.clock.Clock
+import zio.duration.Duration
+import zio.logging.{Logger, Logging}
 import zio.macros.accessible
-import zio.{Has, Task, ZIO, ZLayer}
+import zio.{Has, Schedule, Task, ZIO, ZLayer}
 
 @accessible
 object ProcessingService {
   trait Service {
+    def start: Task[Unit]
     def refreshQueue: Task[Unit]
-    def process: Task[Unit]
+    def processQueue: Task[Unit]
   }
 
-  case class Config(templatesDir: File)
+  case class Config(templatesDir: File, refreshQueueInterval: Duration, processQueueInterval: Duration)
 
   type Dependencies = Has[Config]
+    with Clock
+    with Logging
     with EmployeeRepo
     with AbsenceRepo
     with AbsenceReasonRepo
@@ -39,21 +45,30 @@ object ProcessingService {
 
   val live = ZLayer.fromFunction[Dependencies, Service] { env =>
     val config = env.get[Config]
+    val log    = env.get[Logger[String]]
 
     new Service {
-      override def refreshQueue: Task[Unit] =
-        AbsenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10))).provide(env)
+      override def start: Task[Unit] = {
+        val refresh = ZIO.sleep(config.refreshQueueInterval) *> refreshQueue.repeat(Schedule.spaced(config.refreshQueueInterval))
+        val process = ZIO.sleep(config.processQueueInterval) *> processQueue.repeat(Schedule.spaced(config.processQueueInterval))
+        refresh.forkDaemon *> process.forkDaemon
+      }.provide(env).unit
 
-      override def process: Task[Unit] =
-        AbsenceQueue
-          .getUncompleted(10)
-          .flatMap { xs =>
-            if (xs.isEmpty) ZIO.unit
-            else processMany(xs) // *> process // ignore those who failed on a previous step
-          }
-          .provide(env)
+      override def refreshQueue: Task[Unit] = {
+        log.info("Refreshing the queue") *>
+          AbsenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10)))
+      }.provide(env)
 
-      private def processMany(xs: List[AbsenceQueueItem]): Task[Unit] = Task.foreach(xs)(processOne).unit
+      override def processQueue: Task[Unit] = {
+        log.info("Processing the queue") *>
+          AbsenceQueue
+            .getUncompleted(10)
+            .flatMap { xs =>
+              if (xs.isEmpty) ZIO.unit else processMany(xs)
+            }
+      }.provide(env)
+
+      private def processMany(xs: List[AbsenceQueueItem]): Task[Unit] = Task.foreach(xs)(processOne(_).ignore).unit
 
       private def processOne(x: AbsenceQueueItem): Task[Unit] =
         ZIO
@@ -103,7 +118,6 @@ object ProcessingService {
               case AbsenceClaimType.WithoutCompensation => "without-compensation"
               case AbsenceClaimType.WithCompensation    => "with-compensation"
             }
-
             for {
               templateFile <- {
                 val companyId = employee.companyId.map(_.asString).getOrElse("unknown")
@@ -131,6 +145,10 @@ object ProcessingService {
 
       private def createAppointment(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] = {
         for {
+          localizedName <- employee.localizedName match {
+            case Some(x) => ZIO.succeed(x)
+            case None    => ZIO.fail(DomainError.NotEnoughData(s"Employee ${employee.employeeId.asString}, localizedName"))
+          }
           has <- AbsenceAppointmentService.has(
             SearchFilter(
               start = absence.from,
@@ -139,7 +157,7 @@ object ProcessingService {
             ))
           _ <- ZIO.when(!has) {
             val absenceAppointment = AbsenceAppointment(
-              subject = s"${employee.localizedName.get}: ${absenceReason.name}", // TODO Option.get
+              subject = s"$localizedName: ${absenceReason.name}",
               description = "",
               startDate = absence.from,
               endDate = absence.from.plusDays(absence.daysQuantity),
@@ -157,8 +175,8 @@ object ProcessingService {
           reasonsMap <- AbsenceReasonRepo.all
           _ <- {
             val (unprocessed, nextCursor) = r
-            val xs = unprocessed.view.map { a =>
-              toUnprocessed(a, reasonsMap(a.reasonId)) // TODO Map.apply
+            val xs = unprocessed.view.flatMap { a =>
+              reasonsMap.get(a.reasonId).map(toUnprocessed(a, _))
             }.toList
 
             if (xs.isEmpty) ZIO.unit

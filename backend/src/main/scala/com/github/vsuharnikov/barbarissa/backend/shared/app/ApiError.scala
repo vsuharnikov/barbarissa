@@ -17,6 +17,7 @@ object ApiError {
 
   def statusFrom(x: DomainError): Status = x match {
     case _: DomainError.UnhandledError     => Status.InternalServerError
+    case _: DomainError.NotEnoughData      => Status.InternalServerError
     case _: DomainError.ConfigurationError => Status.InternalServerError
     case _: DomainError.RemoteCallFailed   => Status.BadGateway
     case _: DomainError.NotFound           => Status.NotFound

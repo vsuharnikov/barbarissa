@@ -9,6 +9,10 @@ object DomainError {
     override def getMessage: String = s"An unexpected error: $details. Ask an administrator" // TODO Add time
   }
 
+  case class NotEnoughData(details: String) extends DomainError {
+    override def getMessage: String = s"Not enough data to continue: $details. Try to fill it"
+  }
+
   case class ConfigurationError(override val getMessage: String) extends DomainError
 
   case class RemoteCallFailed(service: String) extends DomainError {

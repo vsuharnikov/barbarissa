@@ -6,23 +6,32 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.Tr
 import doobie.implicits._
 import doobie.util.update.Update
 import zio.interop.catz._
+import zio.logging.{Logger, Logging}
 import zio.{Has, Task, ZIO, ZLayer}
 
 object DbCachedEmployeeRepo {
 
-  type Dependencies = Has[TransactorIO] with MigrationRepo with EmployeeRepo
+  type Dependencies = Logging with Has[TransactorIO] with MigrationRepo with EmployeeRepo
 
   val live: ZLayer[Dependencies, Throwable, Has[EmployeeRepo.Service]] = ZIO
     .accessM[Dependencies] { env =>
       val tr            = env.get[TransactorIO]
       val migrationRepo = env.get[MigrationRepo.Service]
       val underlying    = env.get[EmployeeRepo.Service]
+      val log           = env.get[Logger[String]]
 
       migrationRepo
         .migrate("Employee", Sql.migrations)
         .as(new EmployeeRepo.Service {
-          override def update(draft: Employee): Task[Unit] =
-            underlying.update(draft) *> Sql.update.run(draft).transact(tr).unit
+          override def update(draft: Employee): Task[Unit] = {
+            for {
+              orig <- get(draft.employeeId)
+              _ <- {
+                if (orig.contains(draft)) log.debug(s"Nothing to update in ${draft.employeeId.asString}")
+                else underlying.update(draft) *> Sql.update.run(draft).transact(tr).unit
+              }
+            } yield ()
+          }
 
           override def get(by: EmployeeId): Task[Option[Employee]] =
             Sql.get(by.asString).transact(tr).flatMap {
@@ -30,7 +39,7 @@ object DbCachedEmployeeRepo {
                 for {
                   r <- underlying.get(by)
                   _ <- ZIO.foreach(r) { r =>
-                    Sql.update.run(r).transact(tr)
+                    Sql.update.run(r).transact(tr) *> log.info(s"Caching ${by.asString}")
                   }
                 } yield r
               case r => ZIO.succeed(r)
@@ -42,7 +51,7 @@ object DbCachedEmployeeRepo {
                 for {
                   r <- underlying.search(byEmail)
                   _ <- ZIO.foreach(r) { r =>
-                    Sql.update.run(r).transact(tr)
+                    Sql.update.run(r).transact(tr) *> log.info(s"Caching ${r.employeeId.asString}")
                   }
                 } yield r
               case r => ZIO.succeed(r)

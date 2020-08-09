@@ -1,6 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.shared.infra.db
 
-import java.io.IOException
+import java.io.{File, IOException}
+import java.nio.file.Files
 import java.util.Properties
 
 import javax.sql.DataSource
@@ -10,7 +11,7 @@ import zio.blocking.{Blocking, effectBlockingIO}
 import zio.logging._
 
 object SqliteDataSource {
-  case class Config(url: String, pragmas: Properties)
+  case class Config(dir: File, url: String, pragmas: Properties)
 
   type Dependencies = Has[Config] with Blocking with Logging
 
@@ -21,6 +22,7 @@ object SqliteDataSource {
         .locally(LogAnnotation.Name("SqliteDataSource" :: Nil)) {
           log.info("Initializing") *>
             effectBlockingIO {
+              Files.createDirectories(conf.dir.toPath)
               val ds = new SQLiteDataSource(new SQLiteConfig(conf.pragmas))
               ds.setUrl(conf.url)
               ds

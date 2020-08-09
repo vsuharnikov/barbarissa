@@ -262,7 +262,8 @@ object BarbarissaMain extends App {
             } yield res
           }
         }
-        RequestId.httpApp[AppTask](withRequestLogging)
+        RequestId.httpApp[AppTask](raw)
+//        RequestId.httpApp[AppTask](withRequestLogging) // Issue with multipart
       }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]

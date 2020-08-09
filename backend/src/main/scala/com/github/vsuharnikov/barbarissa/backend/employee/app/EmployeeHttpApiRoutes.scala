@@ -17,15 +17,17 @@ import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inf
 import kantan.csv._
 import kantan.csv.ops._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import org.http4s.multipart.Multipart
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
 import org.http4s.{EntityDecoder, Request, Response, Status}
+import zio.clock.Clock
 import zio.interop.catz._
 import zio.logging._
 import zio.{Has, RIO, URIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
+    R <: Has[EmployeeHttpApiRoutes.Config] with Clock with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonEntitiesEncoding[RIO[R, *]] {
   type HttpIO[A]   = RIO[R, A]
@@ -75,31 +77,39 @@ class EmployeeHttpApiRoutes[
     "Batch update for employees" **
       "employee" @@
         PATCH / "api" / "v0" / "employee" |>> { (req: Request[HttpIO]) =>
-      req.decodeWith(EntityDecoder.text[HttpIO], strict = true) { x =>
-        val reader = x.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
-
-        val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
-          case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
-          case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
-        }
-
-        ZIO
-          .foreach(valid) { csv =>
+      req.decode[Multipart[HttpIO]] { m =>
+        m.parts.headOption match {
+          case None => ZIO.fail(ApiError.clientError("Expected at least one CSV file"))
+          case Some(value) =>
             for {
-              orig <- EmployeeRepo.search(csv.email)
-              _ <- ZIO.foreach(orig) { orig =>
-                EmployeeRepo.update(
-                  orig.copy(
-                    localizedName = csv.name.some,
-                    companyId = csv.companyId.some,
-                    position = csv.position.some,
-                    sex = csv.sex.some
-                  ))
+              csvContent <- value.as[String](monadErrorInstance, EntityDecoder.text)
+              invalid <- {
+                val reader = csvContent.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
+
+                val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
+                  case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
+                  case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
+                }
+
+                ZIO
+                  .foreach(valid) { csv =>
+                    for {
+                      orig <- EmployeeRepo.search(csv.email)
+                      _ <- ZIO.foreach(orig) { orig =>
+                        EmployeeRepo.update(
+                          orig.copy(
+                            localizedName = csv.name.some,
+                            companyId = csv.companyId.some,
+                            position = csv.position.some,
+                            sex = csv.sex.some
+                          ))
+                      }
+                    } yield ()
+                  }
+                  .forkDaemon *> ZIO.succeed(invalid)
               }
-            } yield ()
-          }
-          .forkDaemon *>
-          ZIO.succeed(Response[HttpIO](Status.Ok).withEntity(HttpV0BatchUpdateResponse(invalid)))
+            } yield Response[HttpIO](Status.Ok).withEntity(HttpV0BatchUpdateResponse(invalid))
+        }
       }
     }
 

@@ -12,7 +12,8 @@ class ApiError(val status: Status, val name: String, override val getMessage: St
 }
 
 object ApiError {
-  def from(x: DomainError) = new ApiError(statusFrom(x), x.name, x.getMessage)
+  def from(x: DomainError)         = new ApiError(statusFrom(x), x.name, x.getMessage)
+  def clientError(message: String) = new ApiError(Status.BadRequest, "ClientError", message)
 
   def statusFrom(x: DomainError): Status = x match {
     case _: DomainError.UnhandledError     => Status.InternalServerError

@@ -4,7 +4,13 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData, JiraSearchRequest, JiraSearchResult}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{
+  JiraBasicUserData,
+  JiraExtendedUserData,
+  JiraGetExtendedUserData,
+  JiraSearchRequest,
+  JiraSearchResult
+}
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
 import org.http4s._
@@ -26,7 +32,7 @@ object JiraApi extends Serializable {
     def setUserExtendedData(username: String, draft: JiraExtendedUserData): Task[Unit]
     def getUserExtendedData(username: String): Task[Option[JiraExtendedUserData]]
 
-    def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult]
+    def searchIssues(req: JiraSearchRequest): Task[JiraSearchResult]
   }
 
   case class Config(restApi: Uri, credentials: BasicCredentials, retryPolicy: RetryPolicyConfig)
@@ -65,7 +71,7 @@ object JiraApi extends Serializable {
         override def getUserExtendedData(username: String): Task[Option[JiraExtendedUserData]] =
           get[JiraGetExtendedUserData](jiraUri.userExtendedData(username)).map(_.map(_.value))
 
-        override def searchIssue[T](req: JiraSearchRequest): Task[JiraSearchResult] = {
+        override def searchIssues(req: JiraSearchRequest): Task[JiraSearchResult] = {
           val httpReq = Request[Task](POST, jiraUri.searchIssue, headers = commonHeaders).withEntity(req)
           run(httpReq)(_.as[JiraSearchResult]).flatMap {
             // It is impossible. So treat 404 as a client error

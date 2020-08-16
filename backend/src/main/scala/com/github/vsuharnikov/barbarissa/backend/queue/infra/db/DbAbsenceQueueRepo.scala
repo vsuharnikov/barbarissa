@@ -1,7 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.queue.infra.db
 
 import cats.instances.list._
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO

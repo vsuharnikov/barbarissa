@@ -5,12 +5,10 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
-import cats.ApplicativeError
-import cats.SemigroupK.ops.toAllSemigroupKOps
-import cats.data.Kleisli
+import cats.data.{Kleisli, OptionT}
 import cats.effect.Sync
-import cats.implicits.catsSyntaxApplicativeId
 import cats.syntax.option._
+import cats.{ApplicativeError, SemigroupK}
 import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.absence.domain.{AbsenceReasonRepo, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsenceReasonRepo
@@ -20,16 +18,18 @@ import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppoi
 import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
-import com.github.vsuharnikov.barbarissa.backend.employee.infra._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbCachedEmployeeRepo, DbMigrationRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
+import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
+import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
+import com.github.vsuharnikov.barbarissa.backend.queue.domain.AbsenceQueue
 import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
-import com.github.vsuharnikov.barbarissa.backend.shared.app.ApiError
+import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, ApiRoutes}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, MigrationRepo, SqliteDataSource}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.{DocxReportService, PadegInflection}
 import com.typesafe.config.ConfigFactory
 import io.circe.{Decoder, Encoder}
 import org.http4s.Status.InternalServerError
@@ -187,6 +187,7 @@ object BarbarissaMain extends App {
         absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ reportServiceLayer ++ migrationRepoLayer ++
         processingServiceLayer ++ routesLayer
 
+    // TODO ProcessingService.start
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
       _             <- log.info("Loading config")
       restApiConfig <- config[HttpApiConfig]
@@ -236,9 +237,12 @@ object BarbarissaMain extends App {
       val responseLoggerAnnotation = LogAnnotation.Name(loggerNameBase ::: "ResponseLogger" :: Nil)
 
       val routes = {
-        val routes = new EmployeeHttpApiRoutes[AppEnvironment](PadegInflection).rhoRoutes.toRoutes(rhoMiddleware) <+>
-          new AbsenceHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware) <+>
-          new AppointmentHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware)
+        val routes = combineRoutes(rhoMiddleware)(
+          new EmployeeHttpApiRoutes,
+          new AbsenceHttpApiRoutes,
+          new AppointmentHttpApiRoutes,
+          new ProcessingHttpApiRoutes
+        )
 
         val withResponseLogging = catchErrors(routes)
 
@@ -270,8 +274,8 @@ object BarbarissaMain extends App {
             } yield res
           }
         }
-        RequestId.httpApp[AppTask](raw)
-//        RequestId.httpApp[AppTask](withRequestLogging) // Issue with multipart
+        // RequestId.httpApp[AppTask](raw)
+        RequestId.httpApp[AppTask](withRequestLogging) // Issue with multipart
       }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
@@ -332,4 +336,12 @@ object BarbarissaMain extends App {
       }
     }
   }
+
+  private def combineRoutes(rhoMiddleware: rho.RhoMiddleware[AppTask])(xs: ApiRoutes[AppEnvironment]*): HttpRoutes[AppTask] =
+    SemigroupK[Kleisli[OptionT[AppTask, *], Request[AppTask], *]]
+      .algebra[Response[AppTask]]
+      .combineAllOption(
+        xs.map(_.rhoRoutes.toRoutes(rhoMiddleware))
+      )
+      .getOrElse(throw new RuntimeException("You need at least one route to combine")) // TODO
 }

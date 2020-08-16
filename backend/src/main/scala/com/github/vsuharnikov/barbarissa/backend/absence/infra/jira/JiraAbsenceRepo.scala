@@ -26,7 +26,7 @@ object JiraAbsenceRepo {
         override def get(absenceId: AbsenceId): Task[Option[Absence]] = {
           log.info(s"Updating '${absenceId.asString}'") *>
             JiraApi
-              .searchIssue(
+              .searchIssues(
                 JiraSearchRequest(
                   jql = s"""key=${absenceId.asString} AND $nonEmptyFragment""",
                   startAt = 0,
@@ -41,7 +41,7 @@ object JiraAbsenceRepo {
         override def getByCursor(cursor: GetCursor): Task[(List[Absence], Option[GetCursor])] = {
           log.info(s"Getting by cursor '$cursor'") *>
             JiraApi
-              .searchIssue(JiraSearchRequest(
+              .searchIssues(JiraSearchRequest(
                 jql = s"""reporter=${cursor.by.asString} AND project="HR Services" AND type=Absence AND $nonEmptyFragment ORDER BY key DESC""",
                 startAt = cursor.startAt,
                 maxResults = cursor.maxResults,
@@ -59,7 +59,7 @@ object JiraAbsenceRepo {
           val absenceIdFragment = cursor.from.fold("")(x => s"AND type=Absence AND key > ${x.asString}")
           log.info(s"Getting from by cursor '$cursor'") *>
             JiraApi
-              .searchIssue(JiraSearchRequest(
+              .searchIssues(JiraSearchRequest(
                 jql = s"""project="HR Services" $absenceIdFragment AND $nonEmptyFragment ORDER BY key""",
                 startAt = cursor.startAt,
                 maxResults = cursor.maxResults,

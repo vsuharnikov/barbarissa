@@ -21,5 +21,6 @@ object ApiError {
     case _: DomainError.ConfigurationError => Status.InternalServerError
     case _: DomainError.RemoteCallFailed   => Status.BadGateway
     case _: DomainError.NotFound           => Status.NotFound
+    case _: DomainError.Impossible         => Status.BadRequest
   }
 }

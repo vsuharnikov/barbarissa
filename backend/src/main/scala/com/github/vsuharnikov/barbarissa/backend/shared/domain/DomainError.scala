@@ -22,4 +22,8 @@ object DomainError {
   case class NotFound(klass: String, id: String) extends DomainError {
     override def getMessage: String = s"Can't find '$klass' with id of '$id'"
   }
+
+  case class Impossible(details: String) extends DomainError {
+    override def getMessage: String = s"This operation is not possible: $details"
+  }
 }

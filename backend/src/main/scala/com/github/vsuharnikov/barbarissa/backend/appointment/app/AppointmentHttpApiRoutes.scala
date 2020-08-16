@@ -11,16 +11,15 @@ import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
 import zio.interop.catz._
-import zio.{RIO, URIO, ZIO}
+import zio.{RIO, ZIO}
 
-class AppointmentHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with AbsenceAppointmentService] extends JsonEntitiesEncoding[RIO[R, *]] {
-  type HttpIO[A]   = RIO[R, A]
-  type HttpURIO[A] = URIO[R, A]
-
+class AppointmentHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with AbsenceAppointmentService]
+    extends ApiRoutes[R]
+    with JsonEntitiesEncoding[RIO[R, *]] {
   private val swaggerSyntax = new SwaggerSupport[HttpIO] {}
   import swaggerSyntax._
 
-  val rhoRoutes: RhoRoutes[HttpIO] = new RhoRoutes[HttpIO] {
+  override val rhoRoutes: RhoRoutes[HttpIO] = new RhoRoutes[HttpIO] {
     val parsers = new RoutesParsers[HttpIO]()
     import parsers._
 
@@ -28,10 +27,7 @@ class AppointmentHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with AbsenceAp
       "appointment" @@
         GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
       for {
-        absence <- AbsenceRepo.get(id).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("Absence", id.asString)))
-        }
+        absence <- AbsenceRepo.unsafeGet(id)
         maybeAppointment <- {
           val searchFilter = SearchFilter(
             start = absence.from,
@@ -52,14 +48,8 @@ class AppointmentHttpApiRoutes[R <: EmployeeRepo with AbsenceRepo with AbsenceAp
       "appointment" @@
         PUT / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
       for {
-        absence <- AbsenceRepo.get(id).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("AbsenceAppointment", id.asString)))
-        }
-        employee <- EmployeeRepo.get(absence.employeeId).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("AbsenceAppointment", id.asString)))
-        }
+        absence  <- AbsenceRepo.unsafeGet(id)
+        employee <- EmployeeRepo.unsafeGet(absence.employeeId)
         has <- {
           val searchFilter = SearchFilter(
             start = absence.from,

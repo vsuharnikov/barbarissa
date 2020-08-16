@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra
+package com.github.vsuharnikov.barbarissa.backend.processing.infra
 
 import java.io.File
 import java.time.LocalDate
@@ -8,19 +8,19 @@ import java.util.Locale
 
 import com.github.vsuharnikov.barbarissa.backend.absence.domain.AbsenceRepo.GetAfterCursor
 import com.github.vsuharnikov.barbarissa.backend.absence.domain._
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService.SearchFilter
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.MailService.EmailAddress
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, MailService, ReportService}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, DomainError, EmployeeId, Inflection, MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.PadegInflection
+import zio._
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.logging.{Logger, Logging}
 import zio.macros.accessible
-import zio._
 
 @accessible
 object ProcessingService {
@@ -28,6 +28,7 @@ object ProcessingService {
     def start: Task[Unit]
     def refreshQueue: Task[Unit]
     def processQueue: Task[Unit]
+    def createClaim(aid: AbsenceId): Task[Array[Byte]]
   }
 
   case class Config(templatesDir: File, refreshQueueInterval: Duration, processQueueInterval: Duration)
@@ -71,24 +72,42 @@ object ProcessingService {
             }
       }.provide(env)
 
+      override def createClaim(aid: AbsenceId): Task[Array[Byte]] = {
+        for {
+          absence       <- AbsenceRepo.unsafeGet(aid)
+          absenceReason <- AbsenceReasonRepo.unsafeGet(absence.reasonId)
+          employee      <- EmployeeRepo.unsafeGet(absence.employeeId)
+          absenceReasonSuffix <- absenceReason.needClaim match {
+            case None => ZIO.fail(DomainError.Impossible("The claim is not required"))
+            case Some(claimType) =>
+              ZIO.succeed(claimType match {
+                case AbsenceClaimType.WithoutCompensation => "without-compensation"
+                case AbsenceClaimType.WithCompensation    => "with-compensation"
+              })
+          }
+          templateFile <- {
+            val companyId = employee.companyId.map(_.asString).getOrElse("unknown")
+            val fileName  = s"$companyId-$absenceReasonSuffix.docx"
+            val r         = config.templatesDir.toPath.resolve(fileName).toFile
+            if (r.isFile) ZIO.succeed(r)
+            else ZIO.fail(DomainError.NotFound("Template", fileName))
+          }
+          report <- {
+            val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO IoC
+            ReportService.generate(templateFile, ToArgs.toArgs(data).toMap)
+          }
+        } yield report
+      }.provide(env)
+
       private def processMany(xs: List[AbsenceQueueItem]): Task[Unit] = Task.foreach(xs)(processOne(_).ignore).unit
 
       private def processOne(x: AbsenceQueueItem): Task[Unit] =
         ZIO
           .when(!x.done) {
             for {
-              absence <- AbsenceRepo.get(x.absenceId).flatMap {
-                case Some(x) => ZIO.succeed(x)
-                case None    => ZIO.fail(DomainError.NotFound("Absence", x.absenceId.asString))
-              }
-              absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
-                case Some(x) => ZIO.succeed(x)
-                case None    => ZIO.fail(DomainError.NotFound("AbsenceReason", absence.reasonId.asString))
-              }
-              employee <- EmployeeRepo.get(absence.employeeId).flatMap {
-                case Some(x) => ZIO.succeed(x)
-                case None    => ZIO.fail(DomainError.NotFound("Employee", absence.employeeId.asString))
-              }
+              absence       <- AbsenceRepo.unsafeGet(x.absenceId)
+              absenceReason <- AbsenceReasonRepo.unsafeGet(absence.reasonId)
+              employee      <- EmployeeRepo.unsafeGet(absence.employeeId)
               appointmentCreated <- ZIO
                 .when(!x.appointmentCreated) {
                   createAppointment(employee, absence, absenceReason)

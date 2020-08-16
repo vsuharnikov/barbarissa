@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.absence.domain
 
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, EmployeeId}
-import zio.Task
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, DomainError, EmployeeId}
+import zio.{Task, ZIO}
 import zio.macros.accessible
 
 @accessible
@@ -11,6 +11,10 @@ object AbsenceRepo extends Serializable {
     // See https://github.com/zio/zio/issues/4099
     // type RepoMultipleIO[A, Cursor] = Task[(List[A], Option[Cursor])]
 
+    def unsafeGet(absenceId: AbsenceId): Task[Absence] = get(absenceId).flatMap {
+      case Some(x) => ZIO.succeed(x)
+      case None    => ZIO.fail(DomainError.NotFound("Absence", absenceId.asString))
+    }
     def get(absenceId: AbsenceId): Task[Option[Absence]]
 
     def getById(id: EmployeeId): Task[(List[Absence], Option[GetCursor])] = getByCursor(GetCursor(id, 0, 10))

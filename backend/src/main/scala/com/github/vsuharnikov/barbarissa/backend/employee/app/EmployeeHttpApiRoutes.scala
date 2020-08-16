@@ -7,10 +7,14 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.{HttpV0Absence, HttpV0AbsenceAppointment, HttpV0AbsenceQueueItem, HttpV0BatchUpdateResponse, HttpV0Employee, HttpV0UpdateEmployee, JsonEntitiesEncoding}
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
+import com.github.vsuharnikov.barbarissa.backend.absence.app.entities.{HttpV0Absence, HttpV0AbsenceAppointment}
+import com.github.vsuharnikov.barbarissa.backend.absence.domain.{Absence, AbsenceClaimRequest, AbsenceReason, AbsenceReasonRepo, AbsenceRepo}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.{HttpV0AbsenceQueueItem, HttpV0BatchUpdateResponse, HttpV0Employee, HttpV0UpdateEmployee}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
+import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
 import com.github.vsuharnikov.barbarissa.backend.shared.domain._
 import kantan.csv._
@@ -26,7 +30,7 @@ import zio.logging._
 import zio.{Has, RIO, URIO, ZIO}
 
 class EmployeeHttpApiRoutes[
-    R <: Has[EmployeeHttpApiRoutes.Config] with Clock with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
+    R <: Clock with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
     inflection: Inflection)
     extends JsonEntitiesEncoding[RIO[R, *]] {
   type HttpIO[A]   = RIO[R, A]
@@ -44,7 +48,7 @@ class EmployeeHttpApiRoutes[
 
     "Gets an employee by id" **
       "employee" @@
-        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { (req: Request[HttpIO], id: EmployeeId) =>
+        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") |>> { (id: EmployeeId) =>
       EmployeeRepo
         .get(id)
         .flatMap {
@@ -110,53 +114,6 @@ class EmployeeHttpApiRoutes[
             } yield Response[HttpIO](Status.Ok).withEntity(HttpV0BatchUpdateResponse(invalid))
         }
       }
-    }
-
-    "Gets an employee's absences" **
-      "absence" @@
-        GET / "api" / "v0" / "employee" / pathVar[EmployeeId]("id") / "absence" +? param[Option[HttpSearchCursor]]("cursor") |>> {
-      (id: EmployeeId, cursor: Option[HttpSearchCursor]) =>
-        for {
-          absences       <- AbsenceRepo.getByCursor(AbsenceRepo.GetCursor(id, cursor.fold(0)(_.startAt), cursor.fold(0)(_.maxResults)))
-          absenceReasons <- AbsenceReasonRepo.all
-          body <- {
-            val (as, nextCursor) = absences
-            import cats.implicits._
-            val r = as.foldLeft(List.empty[HttpV0Absence].asRight[List[String]]) {
-              case (r, a) =>
-                absenceReasons.get(a.reasonId) match {
-                  case Some(ar) => r.map(httpAbsenceFrom(a, ar) :: _)
-                  case None     => r.leftMap(a.reasonId.asString :: _)
-                }
-            }
-            r match {
-              case Left(e) => ZIO.fail(ApiError.from(DomainError.ConfigurationError(s"Unknown absence reasons: ${e.mkString(", ")}")))
-              case Right(r) =>
-                ZIO.succeed(
-                  ListResponse(
-                    r,
-                    nextCursor.map(c => HttpSearchCursor(c.startAt, c.maxResults))
-                  ))
-            }
-          }
-          r <- Ok(body)
-        } yield r
-    }
-
-    "Gets an absence by id" **
-      "absence" @@
-        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") |>> { (id: AbsenceId) =>
-      for {
-        absence <- AbsenceRepo.get(id).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("Absence", id.asString)))
-        }
-        absenceReason <- AbsenceReasonRepo.get(absence.reasonId).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("Absence", id.asString)))
-        }
-        r <- Ok(httpAbsenceFrom(absence, absenceReason))
-      } yield r
     }
 
 //    "Generates a claim for employee's absence" **
@@ -277,13 +234,13 @@ class EmployeeHttpApiRoutes[
 
     "Refreshes the queue" **
       "processing" @@
-        POST / "api" / "v0" / "processing" / "refreshQueue" |>> { (req: Request[HttpIO]) =>
+        POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
       ProcessingService.refreshQueue *> Ok("Done")
     }
 
     "Process items in the queue" **
       "processing" @@
-        POST / "api" / "v0" / "processing" / "process" |>> { (req: Request[HttpIO]) =>
+        POST / "api" / "v0" / "processing" / "process" |>> {
       ProcessingService.processQueue *> Ok("Processed")
     }
   }
@@ -341,9 +298,4 @@ class EmployeeHttpApiRoutes[
         CsvEmployee(name, position, email, sex, CompanyId(rawCompanyId))
     }
   }
-}
-
-object EmployeeHttpApiRoutes {
-  case class TemplatesConfig(rootDir: File)
-  case class Config(templates: TemplatesConfig)
 }

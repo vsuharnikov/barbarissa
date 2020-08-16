@@ -1,11 +1,11 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData}
+import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{CompanyId, DomainError, EmployeeId, Sex}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData}
 import zio.logging.{Logging, log}
 import zio.{Has, Task, ZIO, ZLayer}
 

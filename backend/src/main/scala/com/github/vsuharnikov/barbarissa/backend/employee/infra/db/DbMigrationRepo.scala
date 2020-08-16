@@ -2,9 +2,9 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
 
 import cats.syntax.applicative._
 import cats.syntax.apply._
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.MigrationRepo.Migrations
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo.Migrations
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo
 import doobie.ConnectionIO
 import doobie.implicits._
 import zio.interop.catz._

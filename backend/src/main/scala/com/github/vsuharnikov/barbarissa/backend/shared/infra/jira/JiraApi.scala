@@ -2,20 +2,20 @@ package com.github.vsuharnikov.barbarissa.backend.shared.infra.jira
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
-import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities._
+import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData, JiraSearchRequest, JiraSearchResult}
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
 import org.http4s._
 import org.http4s.client.Client
 import org.http4s.headers.{AgentProduct, Authorization, `Content-Type`, `User-Agent`}
+import zio._
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.interop.catz._
-import zio.macros.accessible
-import zio._
 import zio.logging._
+import zio.macros.accessible
 
 @accessible
 object JiraApi extends Serializable {

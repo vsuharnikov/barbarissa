@@ -6,16 +6,23 @@ import java.time.ZoneId
 import java.util.Properties
 
 import cats.ApplicativeError
+import cats.SemigroupK.ops.toAllSemigroupKOps
 import cats.data.Kleisli
 import cats.effect.Sync
 import cats.implicits.catsSyntaxApplicativeId
 import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoutes
+import com.github.vsuharnikov.barbarissa.backend.absence.domain.{AbsenceReasonRepo, AbsenceRepo}
+import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsenceReasonRepo
+import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService
+import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra._
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbAbsenceQueueRepo, DbCachedEmployeeRepo, DbMigrationRepo}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.exchange.MsExchangeAbsenceAppointmentService
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.{JiraAbsenceRepo, JiraEmployeeRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbCachedEmployeeRepo, DbMigrationRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
+import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
 import com.github.vsuharnikov.barbarissa.backend.shared.app.ApiError
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
@@ -62,7 +69,6 @@ object BarbarissaMain extends App {
                            msExchange: MsExchangeService.Config,
                            msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
                            msExchangeMail: MsExchangeMailService.Config,
-                           routes: EmployeeHttpApiRoutes.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
                            sqlite: SqliteDataSource.Config,
                            processing: ProcessingService.Config)
@@ -77,7 +83,6 @@ object BarbarissaMain extends App {
 
   private type AppEnvironment = Clock
     with Has[HttpApiConfig]
-    with Has[EmployeeHttpApiRoutes.Config]
     with Logging
     with EmployeeRepo
     with AbsenceRepo
@@ -171,7 +176,7 @@ object BarbarissaMain extends App {
       employeeRepoLayer ++ absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
       reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
 
-    val routesLayer = configLayer.narrow(_.barbarissa.backend.routes) ++ loggingLayer ++ employeeRepoLayer ++
+    val routesLayer = loggingLayer ++ employeeRepoLayer ++
       absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ reportServiceLayer ++ absenceAppointmentServiceLayer ++
       processingServiceLayer
 
@@ -230,7 +235,8 @@ object BarbarissaMain extends App {
       val responseLoggerAnnotation = LogAnnotation.Name(loggerNameBase ::: "ResponseLogger" :: Nil)
 
       val routes = {
-        val routes = new EmployeeHttpApiRoutes(PadegInflection).rhoRoutes.toRoutes(rhoMiddleware)
+        val routes = new EmployeeHttpApiRoutes[AppEnvironment](PadegInflection).rhoRoutes.toRoutes(rhoMiddleware) <+>
+          new AbsenceHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware)
 
         val withResponseLogging = catchErrors(routes)
 

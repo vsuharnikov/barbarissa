@@ -6,10 +6,13 @@ import java.time.format.{DateTimeFormatter, FormatStyle, TextStyle}
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceAppointmentService.SearchFilter
-import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.GetAfterCursor
+import com.github.vsuharnikov.barbarissa.backend.absence.domain.AbsenceRepo.GetAfterCursor
+import com.github.vsuharnikov.barbarissa.backend.absence.domain._
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
+import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.MailService.EmailAddress
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Inflection, MailService, ReportService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.PadegInflection
@@ -17,7 +20,7 @@ import zio.clock.Clock
 import zio.duration.Duration
 import zio.logging.{Logger, Logging}
 import zio.macros.accessible
-import zio.{Has, Schedule, Task, ZIO, ZLayer}
+import zio._
 
 @accessible
 object ProcessingService {

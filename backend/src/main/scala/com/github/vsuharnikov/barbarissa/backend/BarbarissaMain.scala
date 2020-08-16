@@ -15,6 +15,7 @@ import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoute
 import com.github.vsuharnikov.barbarissa.backend.absence.domain.{AbsenceReasonRepo, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsenceReasonRepo
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
+import com.github.vsuharnikov.barbarissa.backend.appointment.app.AppointmentHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAbsenceAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
@@ -236,7 +237,8 @@ object BarbarissaMain extends App {
 
       val routes = {
         val routes = new EmployeeHttpApiRoutes[AppEnvironment](PadegInflection).rhoRoutes.toRoutes(rhoMiddleware) <+>
-          new AbsenceHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware)
+          new AbsenceHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware) <+>
+          new AppointmentHttpApiRoutes[AppEnvironment].rhoRoutes.toRoutes(rhoMiddleware)
 
         val withResponseLogging = catchErrors(routes)
 

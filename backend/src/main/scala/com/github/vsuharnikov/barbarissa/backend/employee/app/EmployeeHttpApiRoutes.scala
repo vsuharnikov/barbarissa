@@ -1,17 +1,14 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app
 
-import java.io.File
 import java.time.LocalDate
 import java.time.format.{DateTimeFormatter, FormatStyle, TextStyle}
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.absence.app.entities.{HttpV0Absence, HttpV0AbsenceAppointment}
-import com.github.vsuharnikov.barbarissa.backend.absence.domain.{Absence, AbsenceClaimRequest, AbsenceReason, AbsenceReasonRepo, AbsenceRepo}
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
-import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.{HttpV0AbsenceQueueItem, HttpV0BatchUpdateResponse, HttpV0Employee, HttpV0UpdateEmployee}
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService.SearchFilter
+import com.github.vsuharnikov.barbarissa.backend.absence.domain.{Absence, AbsenceClaimRequest, AbsenceReasonRepo, AbsenceRepo}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService
+import com.github.vsuharnikov.barbarissa.backend.employee.app.entities._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
@@ -27,7 +24,7 @@ import org.http4s.{EntityDecoder, Request, Response, Status}
 import zio.clock.Clock
 import zio.interop.catz._
 import zio.logging._
-import zio.{Has, RIO, URIO, ZIO}
+import zio.{RIO, URIO, ZIO}
 
 class EmployeeHttpApiRoutes[
     R <: Clock with Logging with EmployeeRepo with AbsenceRepo with AbsenceReasonRepo with AbsenceQueue with ReportService with AbsenceAppointmentService with ProcessingService](
@@ -161,64 +158,6 @@ class EmployeeHttpApiRoutes[
 //        )
 //    }
 
-    "Gets an appointment for employee's absence" **
-      "appointment" @@
-        GET / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
-      for {
-        absence <- AbsenceRepo.get(id).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("Absence", id.asString)))
-        }
-        maybeAppointment <- {
-          val searchFilter = SearchFilter(
-            start = absence.from,
-            end = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.get(searchFilter)
-        }
-        appointment <- maybeAppointment match {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("AbsenceAppointment", id.asString)))
-        }
-        r <- Ok(httpAbsenceAppointmentFrom(appointment))
-      } yield r
-    }
-
-    "Places an appointment for employee's absence" **
-      "appointment" @@
-        PUT / "api" / "v0" / "absence" / pathVar[AbsenceId]("absenceId") / "appointment" |>> { (id: AbsenceId) =>
-      for {
-        absence <- AbsenceRepo.get(id).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("AbsenceAppointment", id.asString)))
-        }
-        employee <- EmployeeRepo.get(absence.employeeId).flatMap {
-          case Some(x) => ZIO.succeed(x)
-          case None    => ZIO.fail(ApiError.from(DomainError.NotFound("AbsenceAppointment", id.asString)))
-        }
-        has <- {
-          val searchFilter = SearchFilter(
-            start = absence.from,
-            end = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.has(searchFilter)
-        }
-        _ <- ZIO.when(!has) {
-          val absenceAppointment = AbsenceAppointment(
-            subject = s"Ухожу в отпуск ${employee.localizedName.get}",
-            description = "",
-            startDate = absence.from,
-            endDate = absence.from.plusDays(absence.daysQuantity),
-            serviceMark = absence.absenceId.asString
-          )
-          AbsenceAppointmentService.add(absenceAppointment)
-        }
-        r <- if (has) Ok("") else Created("")
-      } yield r
-    }
-
     "Add an item to the queue" **
       "queue" @@
         POST / "api" / "v0" / "queue" / "add" ^ circeJsonDecoder[HttpV0AbsenceQueueItem] |>> { (api: HttpV0AbsenceQueueItem) =>
@@ -245,13 +184,6 @@ class EmployeeHttpApiRoutes[
     }
   }
 
-  private def httpAbsenceFrom(domain: Absence, absenceReason: AbsenceReason): HttpV0Absence = HttpV0Absence(
-    id = domain.absenceId.asString,
-    from = domain.from,
-    daysQuantity = domain.daysQuantity,
-    reason = absenceReason.name
-  )
-
   private def httpEmployeeFrom(domain: Employee): HttpV0Employee = HttpV0Employee(
     id = domain.employeeId.asString,
     name = domain.name,
@@ -259,14 +191,6 @@ class EmployeeHttpApiRoutes[
     companyId = domain.companyId.map(_.asString),
     email = domain.email,
     position = domain.position
-  )
-
-  private def httpAbsenceAppointmentFrom(domain: AbsenceAppointment): HttpV0AbsenceAppointment = HttpV0AbsenceAppointment(
-    subject = domain.subject,
-    description = domain.description,
-    startDate = domain.startDate,
-    endDate = domain.endDate,
-    serviceMark = domain.serviceMark
   )
 
   private def draft(domain: Employee, api: HttpV0UpdateEmployee): Employee = domain.copy(

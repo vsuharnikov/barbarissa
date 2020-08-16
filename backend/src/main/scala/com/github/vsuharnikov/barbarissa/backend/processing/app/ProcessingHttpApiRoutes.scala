@@ -6,34 +6,42 @@ import com.github.vsuharnikov.barbarissa.backend.shared.domain.AbsenceId
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.SwaggerSupport
-import zio.RIO
 import zio.interop.catz._
+import zio.macros.accessible
+import zio.{Task, ZLayer}
 
-class ProcessingHttpApiRoutes[R <: ProcessingService] extends ApiRoutes[R] with JsonEntitiesEncoding[RIO[R, *]] {
-  private val swaggerSyntax = new SwaggerSupport[HttpIO] {}
-  import swaggerSyntax._
+@accessible
+object ProcessingHttpApiRoutes extends Serializable {
+  trait Service extends HasRoutes
 
-  override val rhoRoutes: RhoRoutes[HttpIO] = new RhoRoutes[HttpIO] {
-    val parsers = new RoutesParsers[HttpIO]()
-    import parsers._
+  val live = ZLayer.fromService[ProcessingService.Service, Service] { processingService =>
+    new Service with JsonEntitiesEncoding[Task] {
+      private val swaggerSyntax = new SwaggerSupport[Task] {}
+      import swaggerSyntax._
 
-    "Refreshes the queue" **
-      "processing" @@
-        POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
-      ProcessingService.refreshQueue *> Ok("Done") // TODO
-    }
+      override val rhoRoutes: RhoRoutes[Task] = new RhoRoutes[Task] {
+        val parsers = new RoutesParsers[Task]()
+        import parsers._
 
-    "Process items in the queue" **
-      "processing" @@
-        POST / "api" / "v0" / "processing" / "processQueue" |>> {
-      ProcessingService.processQueue *> Ok("Processed")
-    }
+        "Refreshes the queue" **
+          "processing" @@
+            POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
+          processingService.refreshQueue *> Ok("Done") // TODO
+        }
 
-    "Creates a claim for employee's absence" **
-      "absence" @@
-        POST / "api" / "v0" / "processing" / "createClaim" /
-      "absence" / pathVar[AbsenceId]("absenceId") |>> { (aid: AbsenceId) =>
-      ProcessingService.createClaim(aid).map(Ok(_))
+        "Process items in the queue" **
+          "processing" @@
+            POST / "api" / "v0" / "processing" / "processQueue" |>> {
+          processingService.processQueue *> Ok("Processed")
+        }
+
+        "Creates a claim for employee's absence" **
+          "absence" @@
+            POST / "api" / "v0" / "processing" / "createClaim" /
+          "absence" / pathVar[AbsenceId]("absenceId") |>> { (aid: AbsenceId) =>
+          processingService.createClaim(aid).flatMap(Ok(_))
+        }
+      }
     }
   }
 }

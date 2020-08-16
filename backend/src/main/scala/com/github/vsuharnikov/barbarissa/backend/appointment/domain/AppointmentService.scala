@@ -6,11 +6,11 @@ import zio.Task
 import zio.macros.accessible
 
 @accessible
-object AbsenceAppointmentService extends Serializable {
+object AppointmentService extends Serializable {
   trait Service extends Serializable {
     def has(filter: SearchFilter): Task[Boolean]
-    def get(filter: SearchFilter): Task[Option[AbsenceAppointment]]
-    def add(appointment: AbsenceAppointment): Task[Unit]
+    def get(filter: SearchFilter): Task[Option[Appointment]]
+    def add(appointment: Appointment): Task[Unit]
   }
 
   case class SearchFilter(start: LocalDate, end: LocalDate, serviceMark: String)

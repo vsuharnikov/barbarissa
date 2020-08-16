@@ -10,24 +10,20 @@ import cats.effect.Sync
 import cats.syntax.option._
 import cats.{ApplicativeError, SemigroupK}
 import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoutes
-import com.github.vsuharnikov.barbarissa.backend.absence.domain.{AbsenceReasonRepo, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsenceReasonRepo
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
 import com.github.vsuharnikov.barbarissa.backend.appointment.app.AppointmentHttpApiRoutes
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService
-import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAbsenceAppointmentService
+import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
-import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbCachedEmployeeRepo, DbMigrationRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
-import com.github.vsuharnikov.barbarissa.backend.queue.domain.AbsenceQueue
+import com.github.vsuharnikov.barbarissa.backend.queue.app.QueueHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
-import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, ApiRoutes}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.ReportService
+import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, HasRoutes}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, MigrationRepo, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.typesafe.config.ConfigFactory
@@ -54,6 +50,7 @@ import zio.config.syntax._
 import zio.config.typesafe.TypesafeConfigSource
 import zio.console.putStrLn
 import zio.interop.catz._
+import zio.interop.catz.implicits._
 import zio.logging._
 import zio.logging.slf4j.Slf4jLogger
 import zio.{Tag => _, TypeTag => _, config => _, _}
@@ -68,7 +65,7 @@ object BarbarissaMain extends App {
   case class BackendConfig(httpApi: HttpApiConfig,
                            jira: JiraApi.Config,
                            msExchange: MsExchangeService.Config,
-                           msExchangeAppointment: MsExchangeAbsenceAppointmentService.Config,
+                           msExchangeAppointment: MsExchangeAppointmentService.Config,
                            msExchangeMail: MsExchangeMailService.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
                            sqlite: SqliteDataSource.Config,
@@ -85,14 +82,11 @@ object BarbarissaMain extends App {
   private type AppEnvironment = Clock
     with Has[HttpApiConfig]
     with Logging
-    with EmployeeRepo
-    with AbsenceRepo
-    with AbsenceReasonRepo
-    with MigrationRepo
-    with ReportService
-    with AbsenceAppointmentService
-    with ProcessingService
-    with AbsenceQueue
+    with AbsenceHttpApiRoutes
+    with AppointmentHttpApiRoutes
+    with EmployeeHttpApiRoutes
+    with ProcessingHttpApiRoutes
+    with QueueHttpApiRoutes
 
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
@@ -161,12 +155,12 @@ object BarbarissaMain extends App {
     val msExchangeServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchange) ++ Blocking.live ++ loggingLayer >>>
       MsExchangeService.live
 
-    val absenceAppointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Clock.live ++
-      Blocking.live ++ msExchangeServiceLayer >>> MsExchangeAbsenceAppointmentService.live
+    val appointmentServiceLayer = configLayer.narrow(_.barbarissa.backend.msExchangeAppointment) ++ Clock.live ++
+      Blocking.live ++ msExchangeServiceLayer >>> MsExchangeAppointmentService.live
 
     val absenceReasonRepoLayer = configLayer.narrow(_.barbarissa.backend.absenceReasons) >>> ConfigurableAbsenceReasonRepo.live
 
-    val absenceQueueLayer = transactorLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
+    val queueLayer = transactorLayer ++ migrationRepoLayer >>> DbAbsenceQueueRepo.live
 
     val reportServiceLayer = DocxReportService.live
 
@@ -174,18 +168,24 @@ object BarbarissaMain extends App {
       loggingLayer ++ msExchangeServiceLayer >>> MsExchangeMailService.live
 
     val processingServiceLayer = configLayer.narrow(_.barbarissa.backend.processing) ++ Clock.live ++ loggingLayer ++
-      employeeRepoLayer ++ absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ absenceAppointmentServiceLayer ++
+      employeeRepoLayer ++ absenceRepoLayer ++ absenceReasonRepoLayer ++ queueLayer ++ appointmentServiceLayer ++
       reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
 
-    val routesLayer = loggingLayer ++ employeeRepoLayer ++
-      absenceRepoLayer ++ absenceReasonRepoLayer ++ absenceQueueLayer ++ reportServiceLayer ++ absenceAppointmentServiceLayer ++
-      processingServiceLayer
+    val absenceHttpLayer     = absenceRepoLayer ++ absenceReasonRepoLayer >>> AbsenceHttpApiRoutes.live
+    val appointmentHttpLayer = employeeRepoLayer ++ absenceRepoLayer ++ appointmentServiceLayer >>> AppointmentHttpApiRoutes.live
+    val employeeHttpLayer    = employeeRepoLayer >>> EmployeeHttpApiRoutes.live
+    val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
+    val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
-      Clock.live ++ loggingLayer ++ configLayer.narrow(_.barbarissa.backend.httpApi) ++
-        employeeRepoLayer ++ absenceRepoLayer ++
-        absenceAppointmentServiceLayer ++ absenceReasonRepoLayer ++ reportServiceLayer ++ migrationRepoLayer ++
-        processingServiceLayer ++ routesLayer
+      Clock.live ++
+        configLayer.narrow(_.barbarissa.backend.httpApi) ++
+        loggingLayer ++
+        absenceHttpLayer ++
+        appointmentHttpLayer ++
+        employeeHttpLayer ++
+        processingHttpLayer ++
+        queueHttpLayer
 
     // TODO ProcessingService.start
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
@@ -210,7 +210,7 @@ object BarbarissaMain extends App {
 
   private def makeHttpServer: ZIO[AppEnvironment, Throwable, Unit] =
     ZIO.runtime[AppEnvironment].flatMap { implicit rts =>
-      val s = SwaggerSupport[AppTask]
+      val s = SwaggerSupport[Task]
       import s._
 
       val rhoMiddleware = createRhoMiddleware(
@@ -238,15 +238,16 @@ object BarbarissaMain extends App {
 
       val routes = {
         val routes = combineRoutes(rhoMiddleware)(
-          new EmployeeHttpApiRoutes,
-          new AbsenceHttpApiRoutes,
-          new AppointmentHttpApiRoutes,
-          new ProcessingHttpApiRoutes
+          rts.environment.get[AbsenceHttpApiRoutes.Service],
+          rts.environment.get[AppointmentHttpApiRoutes.Service],
+          rts.environment.get[EmployeeHttpApiRoutes.Service],
+          rts.environment.get[ProcessingHttpApiRoutes.Service],
+          rts.environment.get[QueueHttpApiRoutes.Service]
         )
 
         val withResponseLogging = catchErrors(routes)
 
-        ResponseLogger.httpRoutes[AppTask, Request[AppTask]](
+        ResponseLogger.httpRoutes[Task, Request[Task]](
           logHeaders = true,
           logBody = false,
           logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
@@ -254,14 +255,14 @@ object BarbarissaMain extends App {
         )(withResponseLogging)
       }
 
-      val httpApp: Kleisli[AppTask, Request[AppTask], Response[AppTask]] = {
-        val raw = Router[AppTask]("/" -> routes).orNotFound
-        val withRequestLogging = Kleisli { req: Request[AppTask] =>
+      val httpApp: Kleisli[Task, Request[Task], Response[Task]] = {
+        val raw = Router[Task]("/" -> routes).orNotFound
+        val withRequestLogging = Kleisli { req: Request[Task] =>
           val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
           log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
             for {
               // TODO Why the standard RequestLogger does not receive RequestId? Probably Concurrent is a root cause
-              _ <- org.http4s.internal.Logger.logMessage[AppTask, Request[AppTask]](req)(
+              _ <- org.http4s.internal.Logger.logMessage[Task, Request[Task]](req)(
                 logHeaders = true,
                 logBody = true,
                 redactHeadersWhen
@@ -275,15 +276,15 @@ object BarbarissaMain extends App {
           }
         }
         // RequestId.httpApp[AppTask](raw)
-        RequestId.httpApp[AppTask](withRequestLogging) // Issue with multipart
+        RequestId.httpApp[Task](withRequestLogging) // Issue with multipart
       }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
-      BlazeServerBuilder[AppTask](rts.platform.executor.asEC)
+      BlazeServerBuilder[Task](rts.platform.executor.asEC)
         .bindHttp(restApiConfig.port, restApiConfig.host)
         .withHttpApp(httpApp)
         .serve
-        .compile[AppTask, AppTask, cats.effect.ExitCode]
+        .compile[Task, Task, cats.effect.ExitCode]
         .drain
     }
 
@@ -337,9 +338,9 @@ object BarbarissaMain extends App {
     }
   }
 
-  private def combineRoutes(rhoMiddleware: rho.RhoMiddleware[AppTask])(xs: ApiRoutes[AppEnvironment]*): HttpRoutes[AppTask] =
-    SemigroupK[Kleisli[OptionT[AppTask, *], Request[AppTask], *]]
-      .algebra[Response[AppTask]]
+  private def combineRoutes(rhoMiddleware: rho.RhoMiddleware[Task])(xs: HasRoutes*): HttpRoutes[Task] =
+    SemigroupK[Kleisli[OptionT[Task, *], Request[Task], *]]
+      .algebra[Response[Task]]
       .combineAllOption(
         xs.map(_.rhoRoutes.toRoutes(rhoMiddleware))
       )

@@ -2,7 +2,7 @@ package com.github.vsuharnikov.barbarissa.backend.appointment.domain
 
 import java.time.LocalDate
 
-case class AbsenceAppointment(
+case class Appointment(
     subject: String,
     description: String,
     startDate: LocalDate,

@@ -20,7 +20,7 @@
     <logger name="org.http4s.client.middleware.Logger" level="DEBUG"/>
 
     <!-- DOCX -->
-    <logger name="com.deepoove.poi.resolver" level="WARN"/>
+    <logger name="com.deepoove.poi" level="WARN"/>
 
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <target>System.out</target>

@@ -8,8 +8,8 @@ import java.util.Locale
 
 import com.github.vsuharnikov.barbarissa.backend.absence.domain.AbsenceRepo.GetAfterCursor
 import com.github.vsuharnikov.barbarissa.backend.absence.domain._
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AbsenceAppointmentService.SearchFilter
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AppointmentService.SearchFilter
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{Appointment, AppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
@@ -40,7 +40,7 @@ object ProcessingService {
     with AbsenceRepo
     with AbsenceReasonRepo
     with AbsenceQueue
-    with AbsenceAppointmentService
+    with AppointmentService
     with ReportService
     with MailService
 
@@ -171,21 +171,21 @@ object ProcessingService {
             case Some(x) => ZIO.succeed(x)
             case None    => ZIO.fail(DomainError.NotEnoughData(s"Employee ${employee.employeeId.asString}, localizedName"))
           }
-          has <- AbsenceAppointmentService.has(
+          has <- AppointmentService.has(
             SearchFilter(
               start = absence.from,
               end = absence.from.plusDays(absence.daysQuantity),
               serviceMark = absence.absenceId.asString
             ))
           _ <- ZIO.when(!has) {
-            val absenceAppointment = AbsenceAppointment(
+            val absenceAppointment = Appointment(
               subject = s"$localizedName: ${absenceReason.name}",
               description = "",
               startDate = absence.from,
               endDate = absence.from.plusDays(absence.daysQuantity),
               serviceMark = absence.absenceId.asString
             )
-            AbsenceAppointmentService.add(absenceAppointment)
+            AppointmentService.add(absenceAppointment)
           }
         } yield ()
       }.provide(env)

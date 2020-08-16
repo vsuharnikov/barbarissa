@@ -3,13 +3,13 @@ package com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange
 import java.time.{LocalDate, ZoneId}
 import java.util.{Date, TimeZone}
 
-import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{AbsenceAppointment, AbsenceAppointmentService}
+import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{Appointment, AppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchangeService
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
-import microsoft.exchange.webservices.data.core.service.item.{Appointment, Item}
+import microsoft.exchange.webservices.data.core.service.item.{Appointment => MsAppointment, Item}
 import microsoft.exchange.webservices.data.core.service.schema.{AppointmentSchema, FolderSchema}
 import microsoft.exchange.webservices.data.core.{ExchangeService, PropertySet}
 import microsoft.exchange.webservices.data.property.complex.time.OlsonTimeZoneDefinition
@@ -24,7 +24,7 @@ import zio.clock.Clock
 
 import scala.jdk.CollectionConverters._
 
-object MsExchangeAbsenceAppointmentService {
+object MsExchangeAppointmentService {
   case class Config(
       targetCalendarFolder: TargetCalendarFolderConfig,
       searchPageSize: Int,
@@ -48,7 +48,7 @@ object MsExchangeAbsenceAppointmentService {
 
   type Dependencies = Has[Config] with Clock with Blocking with Has[ExchangeService]
 
-  val live: ZLayer[Dependencies, Throwable, Has[AbsenceAppointmentService.Service]] = ZIO
+  val live: ZLayer[Dependencies, Throwable, Has[AppointmentService.Service]] = ZIO
     .accessM[Dependencies] { env =>
       val config      = env.get[Config]
       val es          = env.get[ExchangeService]
@@ -62,20 +62,20 @@ object MsExchangeAbsenceAppointmentService {
           }
         }.retry(retryPolicy)
       } yield
-        new AbsenceAppointmentService.Service {
+        new AppointmentService.Service {
           private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
 
-          override def has(filter: AbsenceAppointmentService.SearchFilter): Task[Boolean] =
+          override def has(filter: AppointmentService.SearchFilter): Task[Boolean] =
             has(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark).retry(retryPolicy).provide(env)
 
-          override def get(filter: AbsenceAppointmentService.SearchFilter): Task[Option[AbsenceAppointment]] =
+          override def get(filter: AppointmentService.SearchFilter): Task[Option[Appointment]] =
             internalGet(toView(config.searchPageSize), toSearchFilter(filter), filter.serviceMark)
-              .map(_.map(toAbsenceAppointment))
+              .map(_.map(toAppointment))
               .retry(retryPolicy)
               .provide(env)
 
-          override def add(appointment: AbsenceAppointment): Task[Unit] =
-            effectBlockingIO(toAppointment(appointment).save(calendarFolder.getId))
+          override def add(appointment: Appointment): Task[Unit] =
+            effectBlockingIO(toMsAppointment(appointment).save(calendarFolder.getId))
               .retry(retryPolicy)
               .provide(env)
 
@@ -107,7 +107,7 @@ object MsExchangeAbsenceAppointmentService {
               }
             }
 
-          private def internalGet(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Option[Appointment]] =
+          private def internalGet(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Option[MsAppointment]] =
             for {
               items          <- findItemsF(view, searchFilter)
               appointmentNow <- getInF(items, jiraTaskValue)
@@ -121,10 +121,10 @@ object MsExchangeAbsenceAppointmentService {
           private def findItemsF(view: ItemView, searchFilter: SearchFilter): Task[FindItemsResults[Item]] =
             effectBlockingIO(calendarFolder.findItems(searchFilter, view)).provide(env)
 
-          private def getInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Option[Appointment]] =
+          private def getInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Option[MsAppointment]] =
             effectBlockingIO(getIn(items, jiraTaskValue)).provide(env)
 
-          private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[Appointment] =
+          private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[MsAppointment] =
             if (items.getItems.isEmpty) None
             else {
               es.loadPropertiesForItems(items, getPropertySet)
@@ -134,11 +134,11 @@ object MsExchangeAbsenceAppointmentService {
                     property.getPropertyDefinition == jiraTaskKeyPropDef && property.getValue == jiraTaskValue
                   }
                 }
-                .collect { case appointment: Appointment => appointment }
+                .collect { case appointment: MsAppointment => appointment }
             }
 
-          private def toAppointment(appointment: AbsenceAppointment): Appointment = {
-            val r = new Appointment(es)
+          private def toMsAppointment(appointment: Appointment): MsAppointment = {
+            val r = new MsAppointment(es)
             r.setSubject(appointment.subject)
             r.setSensitivity(Sensitivity.Normal)
             r.setBody(MessageBody.getMessageBodyFromText(appointment.description))
@@ -160,7 +160,7 @@ object MsExchangeAbsenceAppointmentService {
             r
           }
 
-          private def toAbsenceAppointment(x: Appointment): AbsenceAppointment = AbsenceAppointment(
+          private def toAppointment(x: MsAppointment): Appointment = Appointment(
             subject = x.getSubject,
             description = x.getBody.toString,
             startDate = toLocalDate(x.getStart),
@@ -172,19 +172,19 @@ object MsExchangeAbsenceAppointmentService {
               .getOrElse("") // Impossible
           )
 
-          private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter): SearchFilter =
-            MsExchangeAbsenceAppointmentService.toSearchFilter(filter, config.zoneId)
+          private def toSearchFilter(filter: AppointmentService.SearchFilter): SearchFilter =
+            MsExchangeAppointmentService.toSearchFilter(filter, config.zoneId)
 
-          private def toDate(x: LocalDate): Date = MsExchangeAbsenceAppointmentService.toDate(x, config.zoneId)
+          private def toDate(x: LocalDate): Date = MsExchangeAppointmentService.toDate(x, config.zoneId)
 
-          private def toLocalDate(x: Date): LocalDate = MsExchangeAbsenceAppointmentService.toLocalDate(x, config.zoneId)
+          private def toLocalDate(x: Date): LocalDate = MsExchangeAppointmentService.toLocalDate(x, config.zoneId)
         }
     }
     .toLayer
 
   private def toView(searchPageSize: Int): ItemView = new ItemView(searchPageSize, 0)
 
-  private def toSearchFilter(filter: AbsenceAppointmentService.SearchFilter, zoneId: ZoneId): SearchFilter = {
+  private def toSearchFilter(filter: AppointmentService.SearchFilter, zoneId: ZoneId): SearchFilter = {
     val r = new SearchFilterCollection(LogicalOperator.And)
     r.add(new SearchFilter.IsGreaterThanOrEqualTo(AppointmentSchema.Start, toDate(filter.start, zoneId)))
     r.add(new SearchFilter.IsLessThanOrEqualTo(AppointmentSchema.End, toDate(filter.end, zoneId)))

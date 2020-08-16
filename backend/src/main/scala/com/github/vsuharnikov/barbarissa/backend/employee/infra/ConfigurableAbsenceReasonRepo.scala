@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra
 
-import com.github.vsuharnikov.barbarissa.backend.employee.AbsenceReasonId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{AbsenceReason, AbsenceReasonRepo}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.AbsenceReasonId
 import zio.config.magnolia.DeriveConfigDescriptor.Descriptor
 import zio.{Task, ZIO, ZLayer}
 

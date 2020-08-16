@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
 
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, CompanyId, EmployeeId}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, CompanyId, EmployeeId}
 import doobie.util.{Get, Put}
 
 // TODO Required?

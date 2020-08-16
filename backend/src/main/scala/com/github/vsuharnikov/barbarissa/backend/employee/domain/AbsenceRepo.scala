@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, EmployeeId}
 import zio.{Task, ZIO}
 
 // @accessible see https://github.com/zio/zio/issues/4020

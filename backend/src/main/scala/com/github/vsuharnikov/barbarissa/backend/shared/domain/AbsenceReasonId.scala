@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.employee
+package com.github.vsuharnikov.barbarissa.backend.shared.domain
 
 import zio.config.magnolia.DeriveConfigDescriptor.Descriptor
 

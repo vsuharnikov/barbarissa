@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app.entities
 
 import cats.effect.Sync
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, EmployeeId}
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.{jsonEncoderOf, jsonOf}
 import org.http4s.{EntityDecoder, EntityEncoder}

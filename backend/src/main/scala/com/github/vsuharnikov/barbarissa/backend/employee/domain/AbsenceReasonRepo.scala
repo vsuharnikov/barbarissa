@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
-import com.github.vsuharnikov.barbarissa.backend.employee.AbsenceReasonId
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.AbsenceReasonId
 import zio.Task
 import zio.macros.accessible
 

@@ -5,7 +5,7 @@ import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntit
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.AbsenceRepo.{GetAfterCursor, GetCursor}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Absence, AbsenceRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraSearchRequest, JiraSearchResult, JiraSearchResultItem}
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, AbsenceReasonId, EmployeeId}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, AbsenceReasonId, EmployeeId}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import zio.logging.{Logging, log}
 import zio.{Has, Task, ZIO, ZLayer}

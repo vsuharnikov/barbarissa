@@ -4,7 +4,7 @@ import java.util.Base64
 
 import cats.Applicative
 import cats.syntax.applicative._
-import com.github.vsuharnikov.barbarissa.backend.employee.{AbsenceId, EmployeeId}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{AbsenceId, EmployeeId}
 import org.http4s.rho.bits.{FailureResponse, ResponseReason, StringParser, SuccessResponse}
 import org.http4s.{Response, Status}
 
@@ -26,6 +26,6 @@ class RoutesParsers[F[_]: Applicative] {
     }
   }
 
-  implicit val employeeIdSP: StringParser[F, EmployeeId] = StringParser.strParser[F].map(EmployeeId(_))
-  implicit val absenceIdSP: StringParser[F, AbsenceId]   = StringParser.strParser[F].map(AbsenceId(_))
+  implicit val employeeIdSP: StringParser[F, EmployeeId] = StringParser.strParser[F].map(EmployeeId)
+  implicit val absenceIdSP: StringParser[F, AbsenceId]   = StringParser.strParser[F].map(AbsenceId)
 }

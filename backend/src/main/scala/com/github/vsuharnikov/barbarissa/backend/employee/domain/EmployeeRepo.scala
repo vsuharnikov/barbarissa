@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
-import com.github.vsuharnikov.barbarissa.backend.employee.EmployeeId
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.EmployeeId
 import zio.Task
 import zio.macros.accessible
 

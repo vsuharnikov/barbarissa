@@ -1,14 +1,13 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.jira
 
+import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData}
-import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.{DomainError, Sex}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{CompanyId, DomainError, EmployeeId, Sex}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import zio.logging.{Logging, log}
 import zio.{Has, Task, ZIO, ZLayer}
-import cats.syntax.option._
-import com.github.vsuharnikov.barbarissa.backend.employee.app.entities.JsonEntitiesEncoding
 
 object JiraEmployeeRepo {
   type Dependencies = Logging with JiraApi

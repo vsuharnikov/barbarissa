@@ -1,7 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.domain
 
-import com.github.vsuharnikov.barbarissa.backend.employee.{CompanyId, EmployeeId}
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.Sex
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.{CompanyId, EmployeeId, Sex}
 
 case class Employee(
     employeeId: EmployeeId,

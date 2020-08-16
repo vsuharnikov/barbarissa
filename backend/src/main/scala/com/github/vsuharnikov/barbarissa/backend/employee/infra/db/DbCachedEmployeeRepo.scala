@@ -1,7 +1,7 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
 
-import com.github.vsuharnikov.barbarissa.backend.employee.EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo, MigrationRepo}
+import com.github.vsuharnikov.barbarissa.backend.shared.domain.EmployeeId
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
 import doobie.implicits._
 import doobie.util.update.Update

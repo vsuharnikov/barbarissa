@@ -5,6 +5,14 @@ import doobie.util.{Get, Put}
 trait Inflection {
   def dativeAppointment(nominativeAppointment: String): String
   def dativeName(name: String, sex: Option[Sex] = None): String
+  def pluralize(x: Int, textForms: (String, String, String)): String = {
+    val n100 = math.abs(x) % 100
+    val n1   = n100        % 10
+    if (n100 > 10 && n100 < 20) textForms._3
+    else if (n1 > 1 && n1 < 5) textForms._2
+    else if (n1 == 1) textForms._1
+    else textForms._3
+  }
 }
 
 sealed trait Sex extends Product with Serializable

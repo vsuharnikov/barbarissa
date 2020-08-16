@@ -221,7 +221,7 @@ object ProcessingService {
     sinGenPosition = inflection.dativeAppointment(e.position.getOrElse("???").toLowerCase(locale)), // TODO
     sinGenFullName = inflection.dativeName(e.localizedName.getOrElse("???"), e.sex),
     sinGenFromDate = toSinGenDateStr(a.from),
-    daysQuantity = a.daysQuantity,
+    plurDaysQuantity = s"${a.daysQuantity} ${inflection.pluralize(a.daysQuantity, ("календарный день", "календарных дня", "календарных дней"))}",
     reportDate = toDateStr(a.from.minus(1, ChronoUnit.MONTHS))
   )
 

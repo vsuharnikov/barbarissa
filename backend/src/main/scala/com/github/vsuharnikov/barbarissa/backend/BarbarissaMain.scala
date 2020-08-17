@@ -7,6 +7,7 @@ import java.util.Properties
 
 import cats.data.{Kleisli, OptionT}
 import cats.effect.Sync
+import cats.implicits.toSemigroupKOps
 import cats.syntax.option._
 import cats.{ApplicativeError, SemigroupK}
 import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoutes
@@ -26,6 +27,7 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
+import com.github.vsuharnikov.barbarissa.backend.swagger.app.SwaggerHttpApiRoutes
 import com.typesafe.config.ConfigFactory
 import io.circe.{Decoder, Encoder}
 import org.http4s.Status.InternalServerError
@@ -35,6 +37,7 @@ import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
 import org.http4s.implicits._
+import org.http4s.rho.RhoRoutes
 import org.http4s.rho.bits.PathAST.{PathMatch, TypedPath}
 import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
 import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
@@ -87,6 +90,7 @@ object BarbarissaMain extends App {
     with EmployeeHttpApiRoutes
     with ProcessingHttpApiRoutes
     with QueueHttpApiRoutes
+    with SwaggerHttpApiRoutes
 
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
@@ -176,6 +180,7 @@ object BarbarissaMain extends App {
     val employeeHttpLayer    = employeeRepoLayer >>> EmployeeHttpApiRoutes.live
     val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
     val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
+    val swaggerHttpLayer     = Blocking.live >>> SwaggerHttpApiRoutes.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++
@@ -185,7 +190,8 @@ object BarbarissaMain extends App {
         appointmentHttpLayer ++
         employeeHttpLayer ++
         processingHttpLayer ++
-        queueHttpLayer
+        queueHttpLayer ++
+        swaggerHttpLayer
 
     // TODO ProcessingService.start
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
@@ -256,7 +262,7 @@ object BarbarissaMain extends App {
       }
 
       val httpApp: Kleisli[Task, Request[Task], Response[Task]] = {
-        val raw = Router[Task]("/" -> routes).orNotFound
+        val raw = Router[Task]("/" -> (routes <+> rts.environment.get[SwaggerHttpApiRoutes.Service].routes)).orNotFound
         val withRequestLogging = Kleisli { req: Request[Task] =>
           val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
           log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
@@ -276,7 +282,10 @@ object BarbarissaMain extends App {
           }
         }
         // RequestId.httpApp[AppTask](raw)
-        RequestId.httpApp[Task](withRequestLogging) // Issue with multipart
+
+        // Issue with multipart
+        val finalRoutes = withRequestLogging
+        RequestId.httpApp[Task](finalRoutes)
       }
 
       val restApiConfig = rts.environment.get[HttpApiConfig]
@@ -339,10 +348,5 @@ object BarbarissaMain extends App {
   }
 
   private def combineRoutes(rhoMiddleware: rho.RhoMiddleware[Task])(xs: HasRoutes*): HttpRoutes[Task] =
-    SemigroupK[Kleisli[OptionT[Task, *], Request[Task], *]]
-      .algebra[Response[Task]]
-      .combineAllOption(
-        xs.map(_.rhoRoutes.toRoutes(rhoMiddleware))
-      )
-      .getOrElse(throw new RuntimeException("You need at least one route to combine")) // TODO
+    xs.map(_.rhoRoutes).reduceLeft(_ and _).toRoutes(rhoMiddleware)
 }

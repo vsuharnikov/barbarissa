@@ -23,6 +23,12 @@ object ProcessingHttpApiRoutes extends Serializable {
         val parsers = new RoutesParsers[Task]()
         import parsers._
 
+        "Starts schedules" **
+          "processing" @@
+            POST / "api" / "v0" / "processing" / "start" |>> {
+          processingService.start *> Ok("Started")
+        }
+
         "Refreshes the queue" **
           "processing" @@
             POST / "api" / "v0" / "processing" / "refreshQueue" |>> {

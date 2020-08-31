@@ -31,7 +31,7 @@ object ProcessingService {
     def createClaim(aid: AbsenceId): Task[Array[Byte]]
   }
 
-  case class Config(templatesDir: File, refreshQueueInterval: Duration, processQueueInterval: Duration)
+  case class Config(autoStart: Boolean, templatesDir: File, refreshQueueInterval: Duration, processQueueInterval: Duration)
 
   type Dependencies = Has[Config]
     with Clock
@@ -47,12 +47,12 @@ object ProcessingService {
   private val locale        = Locale.forLanguageTag("ru")
   private val dateFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(new Locale("ru"))
 
-  val live = ZLayer.fromFunction[Dependencies, Service] { env =>
+  val live = ZLayer.fromFunctionM[Dependencies, Nothing, Service] { env =>
     val config = env.get[Config]
     val log    = env.get[Logger[String]]
 
-    new Service {
-      override def start: Task[Unit] = {
+    val service = new Service {
+      override def start: UIO[Unit] = {
         val refresh = ZIO.sleep(config.refreshQueueInterval) *> refreshQueue.repeat(Schedule.spaced(config.refreshQueueInterval))
         val process = ZIO.sleep(config.processQueueInterval) *> processQueue.repeat(Schedule.spaced(config.processQueueInterval))
         refresh.forkDaemon *> process.forkDaemon
@@ -207,6 +207,10 @@ object ProcessingService {
         } yield ()
       }.provide(env)
     }
+
+    val zService = ZIO.succeed(service)
+    if (config.autoStart) zService.tap(_.start)
+    else zService
   }
 
   def toUnprocessed(a: Absence, ar: AbsenceReason): AbsenceQueueItem = AbsenceQueueItem(

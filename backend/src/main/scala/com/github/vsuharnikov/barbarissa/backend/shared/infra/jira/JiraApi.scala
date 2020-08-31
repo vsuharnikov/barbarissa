@@ -128,7 +128,7 @@ object JiraApi extends Serializable {
 
     def searchUser(email: String): Uri = restApi / "2" / "user" / "search" withQueryParams Map("username" -> email)
 
-    def userExtendedData(username: String): Uri = restApi / "2" / "user" / "properties" / "hr" withQueryParams Map("username" -> username)
+    def userExtendedData(username: String): Uri = restApi / "2" / "user" / "properties" / "barbarissa" withQueryParams Map("username" -> username)
 
     val searchIssue = restApi / "2" / "search"
   }

@@ -28,6 +28,9 @@ mainClass := Some("com.github.vsuharnikov.barbarissa.backend.BarbarissaMain")
 mappings in (Compile, packageDoc) := Seq.empty
 topLevelDirectory := Some(fullName)
 bashScriptConfigLocation := Some(s"$${app_home}/../conf/$fullName/application.ini")
+Compile / packageBin / mappings ~= {
+  _.filterNot { case (_, name) => name.endsWith("local.conf") }
+}
 
 inConfig(Universal)(
   Seq(

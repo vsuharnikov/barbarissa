@@ -1,7 +1,7 @@
 ## Build
 
 ```shell script
-sbt docker
+sbt "clean;docker"
 ```
 
 ## Run

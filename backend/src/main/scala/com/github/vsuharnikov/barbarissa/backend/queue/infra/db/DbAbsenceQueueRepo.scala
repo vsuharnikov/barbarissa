@@ -3,7 +3,7 @@ package com.github.vsuharnikov.barbarissa.backend.queue.infra.db
 import cats.instances.list._
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.H2DbTransactor.TransactorIO
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo.Migrations
 import doobie.implicits._
@@ -45,12 +45,12 @@ absenceId, done, claimSent, appointmentCreated, retries
 FROM AbsenceQueue WHERE done = FALSE ORDER BY absenceId LIMIT $num
 """.query[AbsenceQueueItem].to[List]
 
-    val add = Update[AbsenceQueueItem]("""INSERT OR IGNORE INTO
+    val add = Update[AbsenceQueueItem]("""MERGE INTO
 AbsenceQueue(absenceId, done, claimSent, appointmentCreated, retries)
 VALUES(?, ?, ?, ?, ?)
 """)
 
-    val update = Update[AbsenceQueueItem]("""INSERT OR REPLACE INTO
+    val update = Update[AbsenceQueueItem]("""MERGE INTO
 AbsenceQueue(absenceId, done, claimSent, appointmentCreated, retries)
 VALUES(?, ?, ?, ?, ?)
 """)

@@ -5,25 +5,23 @@ object Dependencies {
   object versionOf {
     val scala           = "2.13.3"
     val cats            = "2.1.1"
-    val monocle         = "2.0.5"
-    val magnolia        = "0.16.0"
-    val zio             = "1.0.0"
+    val monocle         = "2.1.0"
+    val magnolia        = "0.17.0"
+    val zio             = "1.0.1"
     val zioConfig       = "1.0.0-RC26"
     val zioInteropCats  = "2.1.4.0"
-    val zioLogging      = "0.4.0"
-    val zioTestIntelliJ = "1.0.0"
+    val zioLogging      = "0.5.0"
+    val zioTestIntelliJ = "1.0.1"
     val diffx           = "0.3.29"
     val slf4j           = "1.7.30"
     val logbackClassic  = "1.2.3"
     val circe           = "0.13.0"
-    val http4s          = "0.21.6"
-    val poiTl           = "1.8.0"
+    val http4s          = "0.21.7"
+    val poiTl           = "1.8.2"
     val scopt           = "4.0.0-RC2"
-    val scalaTest       = "3.1.1"
     val newType         = "0.4.4"
-    val classGraph      = "4.8.87"
+    val classGraph      = "4.8.89"
     val doobie          = "0.9.0"
-    val sqlite          = "3.32.3.2"
     val kantan          = "0.6.1"
   }
 
@@ -52,7 +50,7 @@ object Dependencies {
 
   val db = Seq(
     "org.tpolecat" %% "doobie-core" % versionOf.doobie,
-    "org.xerial"   % "sqlite-jdbc"  % versionOf.sqlite
+    "org.tpolecat" %% "doobie-h2"   % versionOf.doobie
   )
 
   val csv = Seq(

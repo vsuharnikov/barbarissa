@@ -15,6 +15,7 @@
 
     <!-- HTTP -->
     <logger name="org.http4s" level="WARN"/>
+    <logger name="org.http4s.rho.RhoRoutes" level="INFO"/>
     <logger name="org.http4s.server.middleware.RequestLogger" level="DEBUG"/>
     <logger name="org.http4s.server.middleware.ResponseLogger" level="DEBUG"/>
     <logger name="org.http4s.client.middleware.Logger" level="DEBUG"/>

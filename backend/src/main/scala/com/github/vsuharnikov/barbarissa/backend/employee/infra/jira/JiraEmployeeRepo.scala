@@ -46,7 +46,7 @@ object JiraEmployeeRepo {
                 basic <- JiraApi.searchUsers(byEmail)
                 basic <- basic match {
                   case x :: Nil => ZIO.succeed(x.some)
-                  case Nil      => ZIO.none
+                  case Nil      => log.debug(s"Not found a user by email $byEmail") *> ZIO.none
                   case xs =>
                     ZIO.fail(DomainError.UnhandledError(s"Multiple users have same email: ${xs.map(_.name).mkString(", ")}"))
                 }

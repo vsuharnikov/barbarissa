@@ -4,13 +4,7 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{
-  JiraBasicUserData,
-  JiraExtendedUserData,
-  JiraGetExtendedUserData,
-  JiraSearchRequest,
-  JiraSearchResult
-}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData, JiraSearchRequest, JiraSearchResult}
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
 import org.http4s._

@@ -65,20 +65,23 @@ object EmployeeHttpApiRoutes extends Serializable {
                     }
 
                     ZIO
-                      .foreach(valid) { csv =>
-                        for {
+                      .foreach_(valid) { csv =>
+                        val update = for {
                           orig <- employeeRepo.search(csv.email)
                           _ <- ZIO.foreach(orig) { orig =>
-                            employeeRepo.update(
-                              orig.copy(
-                                localizedName = csv.name.some,
-                                companyId = csv.companyId.some,
-                                position = csv.position.some,
-                                sex = csv.sex.some
-                              ))
+                            employeeRepo
+                              .update(
+                                orig.copy(
+                                  localizedName = csv.name.some,
+                                  companyId = csv.companyId.some,
+                                  position = csv.position.some,
+                                  sex = csv.sex.some
+                                ))
                           }
                         } yield ()
+                        update.ignore
                       }
+                      .tap(_ => ZIO.effect(logger.info("Done the batch update")))
                       .forkDaemon *> ZIO.succeed(invalid)
                   }
                 } yield Response[Task](Status.Ok).withEntity(HttpV0BatchUpdateResponse(invalid))

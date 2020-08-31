@@ -2,7 +2,7 @@ package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
 
 import com.github.vsuharnikov.barbarissa.backend.employee.domain.{Employee, EmployeeRepo}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.EmployeeId
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.H2DbTransactor.TransactorIO
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo
 import doobie.implicits._
 import doobie.util.update.Update
@@ -72,7 +72,7 @@ position VARCHAR(100) NULL,
 sex INTEGER NULL
 )""").map(_.update.run.map(_ => ()))
 
-    val update = Update[Employee]("""INSERT OR REPLACE INTO
+    val update = Update[Employee]("""MERGE INTO
 Employee(employeeId, name, email, localizedName, companyId, position, sex)
 VALUES(?, ?, ?, ?, ?, ?, ?)""")
 

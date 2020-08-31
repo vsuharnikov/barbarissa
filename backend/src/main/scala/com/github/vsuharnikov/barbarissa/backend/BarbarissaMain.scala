@@ -16,7 +16,7 @@ import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceR
 import com.github.vsuharnikov.barbarissa.backend.appointment.app.AppointmentHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAppointmentService
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
-import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.{DbCachedEmployeeRepo, DbMigrationRepo}
+import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbCachedEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
@@ -24,7 +24,7 @@ import com.github.vsuharnikov.barbarissa.backend.queue.app.QueueHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
 import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, HasRoutes}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbTransactor, SqliteDataSource}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbMigrationRepo, H2DbTransactor}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.swagger.app.SwaggerHttpApiRoutes
@@ -71,7 +71,7 @@ object BarbarissaMain extends App {
                            msExchangeAppointment: MsExchangeAppointmentService.Config,
                            msExchangeMail: MsExchangeMailService.Config,
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
-                           sqlite: SqliteDataSource.Config,
+                           h2: H2DbTransactor.Config,
                            processing: ProcessingService.Config)
   case class HttpApiConfig(host: String, port: Int)
 
@@ -105,25 +105,22 @@ object BarbarissaMain extends App {
   }
 
   private def makeProgram(httpClient: TaskManaged[Client[Task]]): RIO[ZEnv, Unit] = {
-    val configLayer = ZLayer
-      .fromEffect {
-        ZIO
-          .fromEither {
-            val typesafeConfig = ConfigFactory.defaultApplication().resolve()
-            TypesafeConfigSource
-              .fromTypesafeConfig(typesafeConfig)
-              .flatMap { source =>
-                read(descriptor[GlobalConfig].mapKey(toKebabCase) from source).left.map(_.prettyPrint())
-              }
+    val configLayer = ZIO
+      .fromEither {
+        val typesafeConfig = ConfigFactory.defaultApplication().resolve()
+        TypesafeConfigSource
+          .fromTypesafeConfig(typesafeConfig)
+          .flatMap { source =>
+            read(descriptor[GlobalConfig].mapKey(toKebabCase) from source).left.map(_.prettyPrint())
           }
-          .mapError(desc => new IllegalArgumentException(s"Can't parse config:\n$desc"))
       }
+      .mapError(desc => new IllegalArgumentException(s"Can't parse config:\n$desc"))
+      .toLayer
 
     val loggingLayer = Slf4jLogger.makeWithAnnotationsAsMdc(
-      rootLoggerName = Some("barbarissa-main"),
       logFormat = (_, logEntry) => logEntry,
       mdcAnnotations = List(requestIdLogAnnotation)
-    )
+    ) >>> Logging.withRootLoggerName("barbarissa")
 
     val httpClientLayer = loggingLayer ++ httpClient.toLayer >>> {
       val loggerNameBase   = "org.http4s.client.middleware.Logger".split('.').toList
@@ -140,9 +137,7 @@ object BarbarissaMain extends App {
         .toLayer
     }
 
-    val dataSourceLayer = configLayer.narrow(_.barbarissa.backend.sqlite) ++ Blocking.live ++ loggingLayer >>> SqliteDataSource.live
-
-    val transactorLayer = dataSourceLayer ++ Blocking.live ++ loggingLayer >>> DbTransactor.live
+    val transactorLayer = configLayer.narrow(_.barbarissa.backend.h2) >>> H2DbTransactor.live
 
     val migrationRepoLayer = transactorLayer >>> DbMigrationRepo.live
 
@@ -251,14 +246,14 @@ object BarbarissaMain extends App {
           rts.environment.get[QueueHttpApiRoutes.Service]
         )
 
-        val withResponseLogging = catchErrors(routes)
+        val withCatchingErrors = catchErrors(routes)
 
         ResponseLogger.httpRoutes[Task, Request[Task]](
           logHeaders = true,
           logBody = false,
           logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
           redactHeadersWhen = redactHeadersWhen
-        )(withResponseLogging)
+        )(withCatchingErrors)
       }
 
       val httpApp: Kleisli[Task, Request[Task], Response[Task]] = {
@@ -270,7 +265,7 @@ object BarbarissaMain extends App {
               // TODO Why the standard RequestLogger does not receive RequestId? Probably Concurrent is a root cause
               _ <- org.http4s.internal.Logger.logMessage[Task, Request[Task]](req)(
                 logHeaders = true,
-                logBody = true,
+                logBody = false, // Prevents working of batch updates, because consumes body
                 redactHeadersWhen
               ) { x =>
                 log.locally(requestLoggerAnnotation) {
@@ -281,7 +276,6 @@ object BarbarissaMain extends App {
             } yield res
           }
         }
-        // RequestId.httpApp[AppTask](raw)
 
         // Issue with multipart
         val finalRoutes = withRequestLogging
@@ -296,14 +290,6 @@ object BarbarissaMain extends App {
         .compile[Task, Task, cats.effect.ExitCode]
         .drain
     }
-
-  // TODO refactor
-  object WrapMiddleware {
-    def apply[F[_], G[_]](http: Http[F, G])(wrap: (Request[G], () => F[Response[G]]) => F[Response[G]]): Http[F, G] =
-      Kleisli { req: Request[G] =>
-        wrap(req, () => http(req))
-      }
-  }
 
   private def showWithStackTrace(x: Throwable): String = {
     val sw = new StringWriter

@@ -1,10 +1,9 @@
-package com.github.vsuharnikov.barbarissa.backend.employee.infra.db
+package com.github.vsuharnikov.barbarissa.backend.shared.infra.db
 
 import cats.syntax.applicative._
 import cats.syntax.apply._
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.H2DbTransactor.TransactorIO
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo.Migrations
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.DbTransactor.TransactorIO
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.MigrationRepo
 import doobie.ConnectionIO
 import doobie.implicits._
 import zio.interop.catz._
@@ -47,6 +46,6 @@ version INTEGER NOT NULL
     def lastVersion(module: String) = sql"SELECT version FROM LastMigration WHERE module = $module".query[Int].unique
 
     def updateVersion(module: String, draftVersion: Int) =
-      sql"""INSERT OR REPLACE INTO LastMigration(module, version) VALUES ($module, $draftVersion)""".update.run.map(_ => ())
+      sql"""MERGE INTO LastMigration(module, version) VALUES ($module, $draftVersion)""".update.run.map(_ => ())
   }
 }

@@ -5,11 +5,11 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
-import cats.data.{Kleisli, OptionT}
+import cats.ApplicativeError
+import cats.data.Kleisli
 import cats.effect.Sync
 import cats.implicits.toSemigroupKOps
 import cats.syntax.option._
-import cats.{ApplicativeError, SemigroupK}
 import com.github.vsuharnikov.barbarissa.backend.absence.app.AbsenceHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsenceReasonRepo
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
@@ -37,7 +37,6 @@ import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
 import org.http4s.implicits._
-import org.http4s.rho.RhoRoutes
 import org.http4s.rho.bits.PathAST.{PathMatch, TypedPath}
 import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
 import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
@@ -45,6 +44,7 @@ import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.{RequestId, ResponseLogger}
 import org.http4s.util.CaseInsensitiveString
+import shapeless.HNil
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
@@ -216,7 +216,7 @@ object BarbarissaMain extends App {
 
       val rhoMiddleware = createRhoMiddleware(
         apiInfo = Info(title = "Barbarissa Backend", version = Version.VersionString),
-        apiPath = TypedPath(PathMatch("api")) / "docs" / "swagger.json",
+        apiPath = TypedPath[Task, HNil](PathMatch("api")) / "docs" / "swagger.json",
         //          swaggerFormats = DefaultSwaggerFormats
         //            .withSerializers(typeOf[ApiV0Countries], mkSwaggerArrayModel[ApiV0Countries, ApiV0Country])
         //            .withSerializers(typeOf[ApiV0Cities], mkSwaggerArrayModel[ApiV0Cities, ApiV0City]),

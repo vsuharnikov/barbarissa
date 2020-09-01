@@ -5,7 +5,7 @@ import doobie.util.{Get, Put}
 
 // TODO Required?
 trait DbEntitiesEncoding {
-  implicit val absenceIdGet: Get[AbsenceId] = Get[String].tmap(AbsenceId)
+  implicit val absenceIdGet: Get[AbsenceId] = Get[String].tmap(AbsenceId(_))
   implicit val absenceIdPut: Put[AbsenceId] = Put[String].contramap(_.asString)
 
   implicit val companyIdGet: Get[CompanyId] = Get[String].tmap(CompanyId)

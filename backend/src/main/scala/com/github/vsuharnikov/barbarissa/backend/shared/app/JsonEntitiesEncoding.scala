@@ -13,7 +13,7 @@ trait JsonEntitiesEncoding[F[_]] {
   implicit def byteArrayEncoder: EntityEncoder[F, Array[Byte]] = EntityEncoder.byteArrayEncoder[F]
 
   implicit val absenceIdEncoder: Encoder[AbsenceId] = Encoder[String].contramap(_.asString)
-  implicit val absenceIdDecoder: Decoder[AbsenceId] = Decoder[String].map(AbsenceId)
+  implicit val absenceIdDecoder: Decoder[AbsenceId] = Decoder[String].map(AbsenceId(_))
 
   implicit val employeeIdEncoder: Encoder[EmployeeId] = Encoder[String].contramap(_.asString)
   implicit val employeeIdDecoder: Decoder[EmployeeId] = Decoder[String].map(EmployeeId)

@@ -78,8 +78,8 @@ chmod -R 755 $userPath $userPath""")
       workDir(userPath)
       entryPoint(
         entryPointSh,
-        s"-Dbarbarissa.backend.runtime-dir=$userPath",
-        s"-Dconfig.file=$userPath/main.conf"
+        s"-Dconfig.file=$userPath/main.conf",
+        s"-Dbarbarissa.backend.runtime-dir=$userPath"
       )
       volume(userPath)
       expose(10203)

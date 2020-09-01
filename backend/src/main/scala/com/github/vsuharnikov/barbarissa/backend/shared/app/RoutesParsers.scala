@@ -27,5 +27,5 @@ class RoutesParsers[F[_]: Applicative] {
   }
 
   implicit val employeeIdSP: StringParser[F, EmployeeId] = StringParser.strParser[F].map(EmployeeId)
-  implicit val absenceIdSP: StringParser[F, AbsenceId]   = StringParser.strParser[F].map(AbsenceId)
+  implicit val absenceIdSP: StringParser[F, AbsenceId]   = StringParser.strParser[F].map(AbsenceId(_))
 }

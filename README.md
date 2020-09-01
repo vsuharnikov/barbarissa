@@ -7,9 +7,9 @@ sbt "clean;docker"
 ## Run
 
 ```shell script
-docker run --name barbarissa -d -p 10203:10203 \
+docker run --name barbarissa -m 256M -d -p 10203:10203 \
 -v /local/path:/var/lib/barbarissa \
-vsuharnikov/barbarissa-backend:0.0.1
+vsuharnikov/barbarissa-backend:latest
 ```
 
 ## API

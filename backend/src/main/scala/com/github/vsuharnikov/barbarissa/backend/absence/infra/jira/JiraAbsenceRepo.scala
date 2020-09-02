@@ -16,6 +16,7 @@ object JiraAbsenceRepo {
       new AbsenceRepo.Service with JsonEntitiesEncoding[Task] {
         private val searchRequestFields = List(
           "reporter",
+          "created",
           "customfield_10439", // "Absence reason"
           "customfield_10437", // "Start Date"
           "customfield_10438" // "Quantiny (days)"
@@ -86,6 +87,7 @@ object JiraAbsenceRepo {
     employeeId = EmployeeId(jira.fields.reporter.name),
     from = jira.fields.startDate,
     daysQuantity = jira.fields.daysQuantity.toInt,
-    reasonId = AbsenceReasonId(jira.fields.absenceReason.id)
+    reasonId = AbsenceReasonId(jira.fields.absenceReason.id),
+    created = jira.fields.created.toLocalDate
   )
 }

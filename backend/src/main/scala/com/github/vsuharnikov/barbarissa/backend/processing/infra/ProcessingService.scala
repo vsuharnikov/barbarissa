@@ -272,6 +272,12 @@ object ProcessingService {
       ZIO.succeed(inflection.dativeName(n, e.sex))
     }
 
+    val reportDate = {
+      val fallbackDate = a.from.minus(14, ChronoUnit.DAYS)
+      if (a.created.isAfter(fallbackDate)) fallbackDate
+      else a.created
+    }
+
     sinGenPosition &&& sinGenFullName map {
       case (sinGenPosition, sinGenFullName) =>
         AbsenceClaimRequest(
@@ -279,7 +285,7 @@ object ProcessingService {
           sinGenFullName = sinGenFullName,
           sinGenFromDate = toSinGenDateStr(a.from),
           plurDaysQuantity = s"${a.daysQuantity} ${inflection.pluralize(a.daysQuantity, ("календарный день", "календарных дня", "календарных дней"))}",
-          reportDate = toDateStr(a.from.minus(1, ChronoUnit.MONTHS))
+          reportDate = toDateStr(reportDate)
         )
     }
   }

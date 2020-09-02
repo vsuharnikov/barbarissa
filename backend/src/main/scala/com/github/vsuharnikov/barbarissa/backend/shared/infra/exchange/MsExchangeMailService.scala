@@ -23,8 +23,8 @@ object MsExchangeMailService {
       val retryPolicy = MsExchangeService.retryPolicy(config.retryPolicy).provide(env)
       new Service {
         override def send(to: EmailAddress, subject: String, bodyText: String, attachments: Map[FileName, FileContent]): Task[Unit] = {
-          val id = UUID.randomUUID().toString
-          log.debug(s"Sending '$id' with subject '$subject' to '${to.asString}'") *>
+          val id = UUID.randomUUID().toString // TODO
+          log.info(s"Sending '$id' with subject '$subject' to '${to.asString}'") *>
             effectBlockingIO {
               val message = new EmailMessage(service)
               message.setSubject(subject)
@@ -35,7 +35,7 @@ object MsExchangeMailService {
                 case (name, content) => messageAttachments.addFileAttachment(name, content)
               }
               message.send()
-            } <* log.debug(s"Sent '$id'")
+            } <* log.info(s"Sent '$id'")
         }.retry(retryPolicy).provide(env)
       }
     }

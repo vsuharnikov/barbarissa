@@ -129,8 +129,8 @@ object BarbarissaMain extends App {
         .access[Has[Client[Task]] with Logging] { env =>
           val client = env.get[Client[Task]]
           Logger[Task](
-            logBody = true,
-            logHeaders = true,
+            logBody = false,
+            logHeaders = false,
             logAction = ((x: String) => log.locally(loggerAnnotation) { log.debug(x) }.provide(env)).some
           )(client)
         }

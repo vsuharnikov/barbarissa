@@ -19,7 +19,7 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.PadegInflection
 import zio._
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.logging.{Logger, Logging}
+import zio.logging.{LogAnnotation, Logger, Logging}
 import zio.macros.accessible
 
 @accessible
@@ -65,22 +65,20 @@ object ProcessingService {
 
       val service: Service = new Service {
         override def start: UIO[Unit] = {
-          val refresh = refreshQueue.repeat(Schedule.spaced(config.refreshQueueInterval)).delay(config.refreshQueueInterval)
-          val process = processQueue.repeat(Schedule.spaced(config.processQueueInterval)).delay(config.processQueueInterval)
+          val refresh = refreshQueue.ignore.repeat(Schedule.spaced(config.refreshQueueInterval)).delay(config.refreshQueueInterval)
+          val process = processQueue.ignore.repeat(Schedule.spaced(config.processQueueInterval)).delay(config.processQueueInterval)
           refresh.forkDaemon *> process.forkDaemon
         }.provide(env).unit
 
         override def refreshQueue: Task[Unit] =
-          log.info("Refreshing the queue") *>
-            absenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10)))
+          absenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10)))
 
         override def processQueue: Task[Unit] =
-          log.info("Processing the queue") *>
-            absenceQueue
-              .getUncompleted(10)
-              .flatMap { xs =>
-                if (xs.isEmpty) ZIO.unit else processMany(xs)
-              }
+          absenceQueue
+            .getUncompleted(10)
+            .flatMap { xs =>
+              if (xs.isEmpty) ZIO.unit else processMany(xs)
+            }
 
         override def createClaim(aid: AbsenceId): Task[Array[Byte]] =
           for {
@@ -102,48 +100,56 @@ object ProcessingService {
               if (r.isFile) ZIO.succeed(r)
               else ZIO.fail(DomainError.NotFound("Template", fileName))
             }
-            report <- {
-              val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO IoC
-              reportService.generate(templateFile, ToArgs.toArgs(data).toMap)
-            }
+            claim  <- absenceClaimRequestFrom(PadegInflection, employee, absence)
+            report <- reportService.generate(templateFile, ToArgs.toArgs(claim).toMap)
           } yield report
 
         private def processMany(xs: List[AbsenceQueueItem]): Task[Unit] = Task.foreach(xs)(processOne(_).ignore).unit
 
         private def processOne(x: AbsenceQueueItem): Task[Unit] =
-          ZIO
-            .when(!x.done) {
-              for {
-                absence       <- absenceRepo.unsafeGet(x.absenceId)
-                absenceReason <- absenceReasonRepo.unsafeGet(absence.reasonId)
-                employee      <- employeeRepo.unsafeGet(absence.employeeId)
-                appointmentCreated <- ZIO
-                  .when(!x.appointmentCreated) {
-                    createAppointment(employee, absence, absenceReason)
+          log.locallyAnnotate(LogAnnotation.Name, "ProcessingService" :: s"processOne(${x.absenceId})" :: Nil) {
+            ZIO
+              .when(!x.done) {
+                val process = for {
+                  absence       <- absenceRepo.unsafeGet(x.absenceId)
+                  absenceReason <- absenceReasonRepo.unsafeGet(absence.reasonId)
+                  employee      <- employeeRepo.unsafeGet(absence.employeeId)
+                  appointmentCreated <- ZIO
+                    .when(!x.appointmentCreated) {
+                      createAppointment(employee, absence, absenceReason)
+                    }
+                    .foldM(
+                      e => log.warn(s"Can't send a claim: ${e.getMessage}") *> ZIO.succeed(false),
+                      _ => ZIO.succeed(true)
+                    )
+                  claimSent <- ZIO
+                    .when(!x.claimSent) {
+                      sendClaim(employee, absence, absenceReason)
+                    }
+                    .foldM(
+                      e => log.warn(s"Can't send a claim: ${e.getMessage}") *> ZIO.succeed(false),
+                      _ => ZIO.succeed(true)
+                    )
+                  _ <- ZIO.when(appointmentCreated || claimSent) {
+                    val draft = x.copy(
+                      done = appointmentCreated && claimSent,
+                      appointmentCreated = appointmentCreated,
+                      claimSent = claimSent,
+                      retries = x.retries + 1
+                    )
+                    absenceQueue.update(draft)
                   }
-                  .as(true)
-                  .catchAll(_ => ZIO.succeed(false))
-                claimSent <- ZIO
-                  .when(!x.claimSent) {
-                    sendClaim(employee, absence, absenceReason)
-                  }
-                  .as(true)
-                  .catchAll(_ => ZIO.succeed(false))
-                _ <- ZIO.when(appointmentCreated || claimSent) {
-                  val draft = x.copy(
-                    done = appointmentCreated && claimSent,
-                    appointmentCreated = appointmentCreated,
-                    claimSent = claimSent,
-                    retries = x.retries + 1
-                  )
-                  absenceQueue.update(draft)
-                }
-              } yield ()
-            }
+                } yield ()
 
-        private def sendClaim(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] = {
-          for {
-            _ <- ZIO.foreach(absenceReason.needClaim) { claimType =>
+                process.tapError { e =>
+                  log.warn(s"Can't process ${x.absenceId}\n${e.getMessage}")
+                }
+              }
+          }
+
+        private def sendClaim(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] =
+          ZIO
+            .foreach(absenceReason.needClaim) { claimType =>
               val absenceReasonSuffix = claimType match {
                 case AbsenceClaimType.WithoutCompensation => "without-compensation"
                 case AbsenceClaimType.WithCompensation    => "with-compensation"
@@ -156,10 +162,8 @@ object ProcessingService {
                   if (r.isFile) ZIO.succeed(r)
                   else ZIO.fail(DomainError.NotFound("Template", fileName))
                 }
-                report <- {
-                  val data = absenceClaimRequestFrom(PadegInflection, employee, absence) // TODO IoC
-                  reportService.generate(templateFile, ToArgs.toArgs(data).toMap)
-                }
+                claim  <- absenceClaimRequestFrom(PadegInflection, employee, absence)
+                report <- reportService.generate(templateFile, ToArgs.toArgs(claim).toMap)
                 _ <- mailService.send(
                   to = EmailAddress(employee.email),
                   subject = s"Заявление: ${absenceReason.name} с ${absence.from}",
@@ -170,14 +174,13 @@ object ProcessingService {
                 )
               } yield ()
             }
-          } yield ()
-        }
+            .unit
 
         private def createAppointment(employee: Employee, absence: Absence, absenceReason: AbsenceReason): Task[Unit] =
           for {
             localizedName <- employee.localizedName match {
               case Some(x) => ZIO.succeed(x)
-              case None    => ZIO.fail(DomainError.NotEnoughData(s"Employee ${employee.employeeId.asString}, localizedName"))
+              case None    => ZIO.fail(DomainError.NotEnoughData(s"Localized name of ${employee.employeeId.asString}"))
             }
             has <- appointmentService.has(
               SearchFilter(
@@ -241,13 +244,26 @@ object ProcessingService {
     retries = 0
   )
 
-  def absenceClaimRequestFrom(inflection: Inflection, e: Employee, a: Absence): AbsenceClaimRequest = AbsenceClaimRequest(
-    sinGenPosition = inflection.dativeAppointment(e.position.getOrElse("???").toLowerCase(locale)), // TODO
-    sinGenFullName = inflection.dativeName(e.localizedName.getOrElse("???"), e.sex),
-    sinGenFromDate = toSinGenDateStr(a.from),
-    plurDaysQuantity = s"${a.daysQuantity} ${inflection.pluralize(a.daysQuantity, ("календарный день", "календарных дня", "календарных дней"))}",
-    reportDate = toDateStr(a.from.minus(1, ChronoUnit.MONTHS))
-  )
+  def absenceClaimRequestFrom(inflection: Inflection, e: Employee, a: Absence): Task[AbsenceClaimRequest] = {
+    val sinGenPosition = e.position.fold[Task[String]](ZIO.fail(DomainError.NotEnoughData(s"Position of ${e.employeeId.asString}"))) { p =>
+      ZIO.succeed(inflection.dativeAppointment(p.toLowerCase(locale)))
+    }
+
+    val sinGenFullName = e.localizedName.fold[Task[String]](ZIO.fail(DomainError.NotEnoughData(s"Localized name of ${e.employeeId.asString}"))) { n =>
+      ZIO.succeed(inflection.dativeName(n, e.sex))
+    }
+
+    sinGenPosition &&& sinGenFullName map {
+      case (sinGenPosition, sinGenFullName) =>
+        AbsenceClaimRequest(
+          sinGenPosition = sinGenPosition,
+          sinGenFullName = sinGenFullName,
+          sinGenFromDate = toSinGenDateStr(a.from),
+          plurDaysQuantity = s"${a.daysQuantity} ${inflection.pluralize(a.daysQuantity, ("календарный день", "календарных дня", "календарных дней"))}",
+          reportDate = toDateStr(a.from.minus(1, ChronoUnit.MONTHS))
+        )
+    }
+  }
 
   private def toSinGenDateStr(x: LocalDate): String = s"${x.getDayOfMonth} ${x.getMonth.getDisplayName(TextStyle.FULL, locale)} ${x.getYear}"
   private def toDateStr(x: LocalDate): String       = dateFormatter.format(x)

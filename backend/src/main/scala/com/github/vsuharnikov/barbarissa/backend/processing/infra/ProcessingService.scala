@@ -71,7 +71,22 @@ object ProcessingService {
         }.provide(env).unit
 
         override def refreshQueue: Task[Unit] =
-          absenceQueue.last.flatMap(x => paginatedLoop(GetAfterCursor(x.map(_.absenceId), 0, 10)))
+          absenceQueue.last(10).flatMap { xs =>
+            if (xs.isEmpty) paginatedLoop(GetAfterCursor(None, 0, 10))
+            else tryRefreshQueue(xs.map(_.absenceId))
+          }
+
+        private def tryRefreshQueue(xs: List[AbsenceId]): Task[Unit] = {
+          xs.headOption match {
+            case None => Task.fail(DomainError.NotEnoughData("Failed to refresh queue. Try to update process-after-absence-id and restart"))
+            case x =>
+              paginatedLoop(GetAfterCursor(x, 0, 10)).catchSome {
+                case e @ DomainError.JiraError(messages) =>
+                  if (messages.exists(_.matches("^An issue with key '.+' does not exist for field 'key'.$"))) tryRefreshQueue(xs.tail)
+                  else Task.fail(e)
+              }
+          }
+        }
 
         override def processQueue: Task[Unit] =
           absenceQueue
@@ -236,13 +251,17 @@ object ProcessingService {
     }
     .toLayer
 
-  def toUnprocessed(a: Absence, ar: AbsenceReason): AbsenceQueueItem = AbsenceQueueItem(
-    absenceId = a.absenceId,
-    done = false,
-    claimSent = ar.needClaim.fold(true)(_ => false),
-    appointmentCreated = ar.needAppointment.fold(true)(!_),
-    retries = 0
-  )
+  def toUnprocessed(a: Absence, ar: AbsenceReason): AbsenceQueueItem = {
+    val claimSent          = ar.needClaim.fold(true)(_ => false)
+    val appointmentCreated = ar.needAppointment.fold(true)(!_)
+    AbsenceQueueItem(
+      absenceId = a.absenceId,
+      done = claimSent && appointmentCreated,
+      claimSent = claimSent,
+      appointmentCreated = appointmentCreated,
+      retries = 0
+    )
+  }
 
   def absenceClaimRequestFrom(inflection: Inflection, e: Employee, a: Absence): Task[AbsenceClaimRequest] = {
     val sinGenPosition = e.position.fold[Task[String]](ZIO.fail(DomainError.NotEnoughData(s"Position of ${e.employeeId.asString}"))) { p =>

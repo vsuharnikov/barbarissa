@@ -26,4 +26,9 @@ object DomainError {
   case class Impossible(details: String) extends DomainError {
     override def getMessage: String = s"This operation is not possible: $details"
   }
+
+  // TODO Get rid of this!
+  case class JiraError(messages: List[String]) extends DomainError {
+    override def getMessage: String = s"The JIRA call failed with messages: ${messages.mkString("; ")}"
+  }
 }

@@ -4,7 +4,14 @@ import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.Version
 import com.github.vsuharnikov.barbarissa.backend.shared.app.JsonEntitiesEncoding
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
-import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{JiraBasicUserData, JiraExtendedUserData, JiraGetExtendedUserData, JiraSearchRequest, JiraSearchResult}
+import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.entities.{
+  JiraBasicUserData,
+  JiraExtendedUserData,
+  JiraGetExtendedUserData,
+  JiraSearchFailedResult,
+  JiraSearchRequest,
+  JiraSearchResult
+}
 import io.circe.syntax._
 import org.http4s.Method.{POST, PUT}
 import org.http4s._
@@ -67,10 +74,13 @@ object JiraApi extends Serializable {
 
         override def searchIssues(req: JiraSearchRequest): Task[JiraSearchResult] = {
           val httpReq = Request[Task](POST, jiraUri.searchIssue, headers = commonHeaders).withEntity(req)
-          run(httpReq)(_.as[JiraSearchResult]).flatMap {
-            // It is impossible. So treat 404 as a client error
-            case None    => ZIO.fail(DomainError.NotFound("JiraIssue", s"${req.jql}"))
-            case Some(x) => ZIO.succeed(x)
+          runWithError(httpReq) {
+            case Status.Successful(x)  => x.as[JiraSearchResult]
+            case Status.ServerError(_) => Task.fail(remoteCallFailed)
+            case x =>
+              if (x.status == Status.BadRequest) x.as[JiraSearchFailedResult].flatMap { x =>
+                Task.fail(DomainError.JiraError(x.errorMessages))
+              } else Task.fail(DomainError.UnhandledError("Jira call failed"))
           }
         }
 
@@ -82,26 +92,25 @@ object JiraApi extends Serializable {
 
         private val remoteCallFailed = DomainError.RemoteCallFailed("Jira")
         private def run[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[Option[T]] =
-          client
-            .run(req)
-            .use {
-              case Status.Successful(x)  => f(x).map(_.some)
-              case Status.ServerError(_) => Task.fail(remoteCallFailed)
-              case x =>
-                if (x.status == Status.NotFound) Task.succeed(none)
-                else Task.fail(DomainError.UnhandledError("Jira call failed"))
-            }
-            .retry(retryPolicy)
-            .provide(env)
+          runWithError(req) {
+            case Status.Successful(x)  => f(x).map(_.some)
+            case Status.ServerError(_) => Task.fail(remoteCallFailed)
+            case x =>
+              if (x.status == Status.NotFound) Task.succeed(none)
+              else Task.fail(DomainError.UnhandledError("Jira call failed"))
+          }
 
         private def runMany[T](req: Request[Task])(f: Response[Task] => Task[List[T]]): Task[List[T]] =
+          runWithError(req) {
+            case Status.Successful(x)  => f(x)
+            case Status.ServerError(_) => Task.fail(remoteCallFailed)
+            case _                     => Task.fail(DomainError.UnhandledError("Jira call failed"))
+          }
+
+        private def runWithError[T](req: Request[Task])(f: Response[Task] => Task[T]): Task[T] =
           client
             .run(req)
-            .use {
-              case Status.Successful(x)  => f(x)
-              case Status.ServerError(_) => Task.fail(remoteCallFailed)
-              case x                     => Task.fail(DomainError.UnhandledError("Jira call failed"))
-            }
+            .use(f)
             .retry(retryPolicy)
             .provide(env)
 
@@ -109,8 +118,8 @@ object JiraApi extends Serializable {
           Schedule.recurs(config.retryPolicy.recur) &&
           Schedule.spaced(config.retryPolicy.space) &&
           Schedule.recurWhile[Throwable] {
-            case _: DomainError.UnhandledError => false
-            case _                             => true
+            case _: DomainError.UnhandledError | _: DomainError.JiraError => false
+            case _                                                        => true
           }
         }.unit.provide(env)
       }

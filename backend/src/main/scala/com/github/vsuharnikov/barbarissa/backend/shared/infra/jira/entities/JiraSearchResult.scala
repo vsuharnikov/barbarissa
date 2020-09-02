@@ -7,6 +7,8 @@ import io.circe.generic.extras._
 
 @JsonCodec case class JiraSearchRequest(jql: String, startAt: Int, maxResults: Int, fields: List[String])
 
+@JsonCodec case class JiraSearchFailedResult(errorMessages: List[String])
+
 @JsonCodec case class JiraSearchResult(startAt: Int, maxResults: Int, total: Int, issues: List[JiraSearchResultItem])
 @JsonCodec case class JiraSearchResultItem(key: String, self: String, fields: JiraSearchResultItemFields)
 @ConfiguredJsonCodec case class JiraSearchResultItemFields(

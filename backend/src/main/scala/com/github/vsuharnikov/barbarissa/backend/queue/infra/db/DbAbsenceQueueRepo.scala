@@ -23,7 +23,7 @@ object DbAbsenceQueueRepo {
           override def getUncompleted(num: Int): Task[List[AbsenceQueueItem]] = Sql.getUncompleted(num).transact(tr)
           override def add(drafts: List[AbsenceQueueItem]): Task[Unit]        = Sql.add.updateMany(drafts).transact(tr).unit
           override def update(draft: AbsenceQueueItem): Task[Unit]            = Sql.update.run(draft).transact(tr).unit
-          override val last: Task[Option[AbsenceQueueItem]]                   = Sql.last.option.transact(tr)
+          override def last(num: Int): Task[List[AbsenceQueueItem]]           = Sql.last(num).transact(tr)
         })
     }
     .toLayer
@@ -45,7 +45,7 @@ absenceId, done, claimSent, appointmentCreated, retries
 FROM AbsenceQueue WHERE done = FALSE ORDER BY absenceId LIMIT $num
 """.query[AbsenceQueueItem].to[List]
 
-    val add = Update[AbsenceQueueItem]("""MERGE INTO
+    val add = Update[AbsenceQueueItem]("""INSERT IGNORE INTO
 AbsenceQueue(absenceId, done, claimSent, appointmentCreated, retries)
 VALUES(?, ?, ?, ?, ?)
 """)
@@ -55,9 +55,9 @@ AbsenceQueue(absenceId, done, claimSent, appointmentCreated, retries)
 VALUES(?, ?, ?, ?, ?)
 """)
 
-    val last = sql"""SELECT
+    def last(num: Int) = sql"""SELECT
 absenceId, done, claimSent, appointmentCreated, retries
-FROM AbsenceQueue WHERE done = TRUE ORDER BY absenceId DESC LIMIT 1
-""".query[AbsenceQueueItem]
+FROM AbsenceQueue WHERE done = TRUE ORDER BY absenceId DESC LIMIT $num
+""".query[AbsenceQueueItem].to[List]
   }
 }

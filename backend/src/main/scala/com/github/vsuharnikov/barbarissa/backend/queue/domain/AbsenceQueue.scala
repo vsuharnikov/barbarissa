@@ -9,6 +9,6 @@ object AbsenceQueue extends Serializable {
     def getUncompleted(num: Int): Task[List[AbsenceQueueItem]]
     def add(drafts: List[AbsenceQueueItem]): Task[Unit]
     def update(draft: AbsenceQueueItem): Task[Unit]
-    def last: Task[Option[AbsenceQueueItem]]
+    def last(num: Int): Task[List[AbsenceQueueItem]]
   }
 }

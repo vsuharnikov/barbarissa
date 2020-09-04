@@ -7,6 +7,8 @@ import java.util.Properties
 
 import cats.ApplicativeError
 import cats.data.Kleisli
+import sttp.tapir.openapi.OpenAPI
+import sttp.tapir.openapi.circe.yaml._
 import cats.effect.Sync
 import cats.implicits.toSemigroupKOps
 import cats.syntax.option._
@@ -15,14 +17,14 @@ import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsen
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
 import com.github.vsuharnikov.barbarissa.backend.appointment.app.AppointmentHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAppointmentService
-import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
+import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRhoRoutes, EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbCachedEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.queue.app.QueueHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
-import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, HasRoutes}
+import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, HasRhoRoutes}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbMigrationRepo, H2DbTransactor}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
@@ -82,15 +84,12 @@ object BarbarissaMain extends App {
   Security.setProperty("networkaddress.cache.ttl", "0")
   Security.setProperty("networkaddress.cache.negative.ttl", "0")
 
-  private type AppEnvironment = Clock
-    with Has[HttpApiConfig]
-    with Logging
-    with AbsenceHttpApiRoutes
-    with AppointmentHttpApiRoutes
-    with EmployeeHttpApiRoutes
-    with ProcessingHttpApiRoutes
-    with QueueHttpApiRoutes
-    with SwaggerHttpApiRoutes
+  private type AppEnvironment = Clock with Blocking with Has[HttpApiConfig] with Logging with EmployeeHttpApiRoutes with AbsenceHttpApiRoutes
+//    with AppointmentHttpApiRoutes
+//    with EmployeeHttpApiRhoRoutes
+//    with ProcessingHttpApiRoutes
+//    with QueueHttpApiRoutes
+//    with SwaggerHttpApiRoutes
 
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
@@ -173,20 +172,22 @@ object BarbarissaMain extends App {
     val absenceHttpLayer     = absenceRepoLayer ++ absenceReasonRepoLayer >>> AbsenceHttpApiRoutes.live
     val appointmentHttpLayer = employeeRepoLayer ++ absenceRepoLayer ++ appointmentServiceLayer >>> AppointmentHttpApiRoutes.live
     val employeeHttpLayer    = employeeRepoLayer >>> EmployeeHttpApiRoutes.live
+    val employeeHttpRhoLayer = employeeRepoLayer >>> EmployeeHttpApiRhoRoutes.live
     val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
     val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
-    val swaggerHttpLayer     = Blocking.live >>> SwaggerHttpApiRoutes.live
+//    val swaggerHttpLayer     = Blocking.live >>> SwaggerHttpApiRoutes.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++
+        Blocking.live ++
         configLayer.narrow(_.barbarissa.backend.httpApi) ++
         loggingLayer ++
         absenceHttpLayer ++
         appointmentHttpLayer ++
         employeeHttpLayer ++
         processingHttpLayer ++
-        queueHttpLayer ++
-        swaggerHttpLayer
+        queueHttpLayer /*++
+        swaggerHttpLayer*/
 
     // TODO ProcessingService.start
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
@@ -236,28 +237,53 @@ object BarbarissaMain extends App {
       val loggerNameBase           = "org.http4s.server.middleware".split('.').toList // HACK
       val requestLoggerAnnotation  = LogAnnotation.Name(loggerNameBase ::: "RequestLogger" :: Nil)
       val responseLoggerAnnotation = LogAnnotation.Name(loggerNameBase ::: "ResponseLogger" :: Nil)
+      val blocking                 = rts.environment.get[Blocking.Service]
 
-      val routes = {
-        val routes = combineRoutes(rhoMiddleware)(
-          rts.environment.get[AbsenceHttpApiRoutes.Service],
-          rts.environment.get[AppointmentHttpApiRoutes.Service],
-          rts.environment.get[EmployeeHttpApiRoutes.Service],
-          rts.environment.get[ProcessingHttpApiRoutes.Service],
-          rts.environment.get[QueueHttpApiRoutes.Service]
-        )
+      val (routes, yaml) = {
+        val employeeHttpApiRoutes = rts.environment.get[EmployeeHttpApiRoutes.Service]
+        val absenceHttpApiRoutes  = rts.environment.get[AbsenceHttpApiRoutes.Service]
+        //        val routes = combineRoutes(rhoMiddleware)(
+//          rts.environment.get[AbsenceHttpApiRoutes.Service],
+//          rts.environment.get[AppointmentHttpApiRoutes.Service],
+//          rts.environment.get[EmployeeHttpApiRhoRoutes.Service],
+//          rts.environment.get[ProcessingHttpApiRoutes.Service],
+//          rts.environment.get[QueueHttpApiRoutes.Service]
+//        )
+        val routes = List(absenceHttpApiRoutes, employeeHttpApiRoutes).map(_.http4sRoutes).reduceLeft(_ <+> _)
+        val yaml = List(absenceHttpApiRoutes, employeeHttpApiRoutes)
+          .map(_.openApiDocs)
+          .reduceLeft[OpenAPI] {
+            case (x, r) =>
+              r.copy(
+                tags = x.tags ::: r.tags,
+                paths = x.paths ++ r.paths,
+                components = (x.components, r.components) match {
+                  case (None, x) => x
+                  case (x, None) => x
+                  case (Some(x), Some(r)) =>
+                    Some(
+                      r.copy(
+                        schemas = r.schemas ++ x.schemas,
+                        securitySchemes = r.securitySchemes ++ x.securitySchemes
+                      ))
+                },
+                security = x.security ++ r.security
+              )
+          }
+          .toYaml
 
-        val withCatchingErrors = catchErrors(routes)
+        // val withCatchingErrors = catchErrors(routes)
 
         ResponseLogger.httpRoutes[Task, Request[Task]](
           logHeaders = true,
           logBody = false,
           logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
           redactHeadersWhen = redactHeadersWhen
-        )(withCatchingErrors)
+        )(routes) -> yaml //(withCatchingErrors)
       }
 
       val httpApp: Kleisli[Task, Request[Task], Response[Task]] = {
-        val raw = Router[Task]("/" -> (routes <+> rts.environment.get[SwaggerHttpApiRoutes.Service].routes)).orNotFound
+        val raw = Router[Task]("/" -> (routes <+> SwaggerHttpApiRoutes.live(blocking.blockingExecutor, yaml).routes)).orNotFound
         val withRequestLogging = Kleisli { req: Request[Task] =>
           val requestId = req.headers.get(CaseInsensitiveString("X-Request-ID")).fold("null")(_.value)
           log.locally(_.annotate(requestIdLogAnnotation, requestId)) {
@@ -323,16 +349,4 @@ object BarbarissaMain extends App {
 
   implicit def circeJsonDecoder[F[_], A: Decoder](implicit sync: Sync[F]): EntityDecoder[F, A] = jsonOf[F, A]
   implicit def circeJsonEncoder[F[_], A: Encoder]: EntityEncoder[F, A]                         = jsonEncoderOf[F, A]
-
-  private def catchErrors[G[_], F[_], A](http: Kleisli[G, A, Response[F]])(implicit G: ApplicativeError[G, Throwable]): Kleisli[G, A, Response[F]] = {
-    Kleisli[G, A, Response[F]] { req =>
-      G.recover(http(req)) {
-        case x: ApiError => Response[F](x.status).withEntity(x.body)
-        case x           => Response[F](InternalServerError).withEntity(Option(x.getMessage).getOrElse(x.getClass.getName))
-      }
-    }
-  }
-
-  private def combineRoutes(rhoMiddleware: rho.RhoMiddleware[Task])(xs: HasRoutes*): HttpRoutes[Task] =
-    xs.map(_.rhoRoutes).reduceLeft(_ and _).toRoutes(rhoMiddleware)
 }

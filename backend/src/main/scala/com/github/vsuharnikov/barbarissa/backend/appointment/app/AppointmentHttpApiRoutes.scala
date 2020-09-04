@@ -16,7 +16,7 @@ import zio.{Task, ZIO, ZLayer}
 
 @accessible
 object AppointmentHttpApiRoutes extends Serializable {
-  trait Service extends HasRoutes
+  trait Service extends HasRhoRoutes
 
   val live = ZLayer.fromServices[EmployeeRepo.Service, AbsenceRepo.Service, AppointmentService.Service, Service] {
     (employeeRepo, absenceRepo, appService) =>

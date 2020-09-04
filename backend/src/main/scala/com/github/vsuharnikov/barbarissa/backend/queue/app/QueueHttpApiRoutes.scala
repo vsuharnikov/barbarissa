@@ -13,7 +13,7 @@ import zio.{Task, ZLayer}
 
 @accessible
 object QueueHttpApiRoutes extends Serializable {
-  trait Service extends HasRoutes
+  trait Service extends HasRhoRoutes
 
   val live = ZLayer.fromService[AbsenceQueue.Service, Service] { absenceQueue =>
     new Service with JsonEntitiesEncoding[Task] {

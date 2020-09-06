@@ -5,10 +5,7 @@ import java.security.Security
 import java.time.ZoneId
 import java.util.Properties
 
-import cats.ApplicativeError
 import cats.data.Kleisli
-import sttp.tapir.openapi.OpenAPI
-import sttp.tapir.openapi.circe.yaml._
 import cats.effect.Sync
 import cats.implicits.toSemigroupKOps
 import cats.syntax.option._
@@ -17,14 +14,13 @@ import com.github.vsuharnikov.barbarissa.backend.absence.infra.ConfigurableAbsen
 import com.github.vsuharnikov.barbarissa.backend.absence.infra.jira.JiraAbsenceRepo
 import com.github.vsuharnikov.barbarissa.backend.appointment.app.AppointmentHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsExchangeAppointmentService
-import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRhoRoutes, EmployeeHttpApiRoutes, requestIdLogAnnotation}
+import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbCachedEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.queue.app.QueueHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.queue.infra.db.DbAbsenceQueueRepo
-import com.github.vsuharnikov.barbarissa.backend.shared.app.{ApiError, HasRhoRoutes}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.DocxReportService
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.db.{DbMigrationRepo, H2DbTransactor}
 import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.{MsExchangeMailService, MsExchangeService}
@@ -32,7 +28,6 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.jira.JiraApi
 import com.github.vsuharnikov.barbarissa.backend.swagger.app.SwaggerHttpApiRoutes
 import com.typesafe.config.ConfigFactory
 import io.circe.{Decoder, Encoder}
-import org.http4s.Status.InternalServerError
 import org.http4s._
 import org.http4s.circe.{jsonEncoderOf, jsonOf}
 import org.http4s.client.Client
@@ -47,6 +42,8 @@ import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.{RequestId, ResponseLogger}
 import org.http4s.util.CaseInsensitiveString
 import shapeless.HNil
+import sttp.tapir.openapi.OpenAPI
+import sttp.tapir.openapi.circe.yaml._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.config._
@@ -84,12 +81,15 @@ object BarbarissaMain extends App {
   Security.setProperty("networkaddress.cache.ttl", "0")
   Security.setProperty("networkaddress.cache.negative.ttl", "0")
 
-  private type AppEnvironment = Clock with Blocking with Has[HttpApiConfig] with Logging with EmployeeHttpApiRoutes with AbsenceHttpApiRoutes
-//    with AppointmentHttpApiRoutes
-//    with EmployeeHttpApiRhoRoutes
-//    with ProcessingHttpApiRoutes
-//    with QueueHttpApiRoutes
-//    with SwaggerHttpApiRoutes
+  private type AppEnvironment = Clock
+    with Blocking
+    with Has[HttpApiConfig]
+    with Logging
+    with AbsenceHttpApiRoutes
+    with AppointmentHttpApiRoutes
+    with EmployeeHttpApiRoutes
+    with ProcessingHttpApiRoutes
+    with QueueHttpApiRoutes
 
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
@@ -171,8 +171,7 @@ object BarbarissaMain extends App {
 
     val absenceHttpLayer     = absenceRepoLayer ++ absenceReasonRepoLayer >>> AbsenceHttpApiRoutes.live
     val appointmentHttpLayer = employeeRepoLayer ++ absenceRepoLayer ++ appointmentServiceLayer >>> AppointmentHttpApiRoutes.live
-    val employeeHttpLayer    = employeeRepoLayer >>> EmployeeHttpApiRoutes.live
-    val employeeHttpRhoLayer = employeeRepoLayer >>> EmployeeHttpApiRhoRoutes.live
+    val employeeHttpLayer    = loggingLayer ++ employeeRepoLayer >>> EmployeeHttpApiRoutes.live
     val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
     val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
 //    val swaggerHttpLayer     = Blocking.live >>> SwaggerHttpApiRoutes.live
@@ -240,18 +239,16 @@ object BarbarissaMain extends App {
       val blocking                 = rts.environment.get[Blocking.Service]
 
       val (routes, yaml) = {
-        val employeeHttpApiRoutes = rts.environment.get[EmployeeHttpApiRoutes.Service]
-        val absenceHttpApiRoutes  = rts.environment.get[AbsenceHttpApiRoutes.Service]
-        //        val routes = combineRoutes(rhoMiddleware)(
-//          rts.environment.get[AbsenceHttpApiRoutes.Service],
-//          rts.environment.get[AppointmentHttpApiRoutes.Service],
-//          rts.environment.get[EmployeeHttpApiRhoRoutes.Service],
-//          rts.environment.get[ProcessingHttpApiRoutes.Service],
-//          rts.environment.get[QueueHttpApiRoutes.Service]
-//        )
-        val routes = List(absenceHttpApiRoutes, employeeHttpApiRoutes).map(_.http4sRoutes).reduceLeft(_ <+> _)
-        val yaml = List(absenceHttpApiRoutes, employeeHttpApiRoutes)
-          .map(_.openApiDocs)
+        val routes = List(
+          rts.environment.get[EmployeeHttpApiRoutes.Service],
+          rts.environment.get[AbsenceHttpApiRoutes.Service],
+          rts.environment.get[AppointmentHttpApiRoutes.Service],
+          rts.environment.get[ProcessingHttpApiRoutes.Service],
+          rts.environment.get[QueueHttpApiRoutes.Service]
+        )
+        val http4sRoutes = routes.map(_.http4sRoute).reduceLeft(_ <+> _)
+        val yaml = routes
+          .map(_.openApiDoc)
           .reduceLeft[OpenAPI] {
             case (x, r) =>
               r.copy(
@@ -279,7 +276,7 @@ object BarbarissaMain extends App {
           logBody = false,
           logAction = ((x: String) => log.locally(responseLoggerAnnotation) { log.debug(x) }).some,
           redactHeadersWhen = redactHeadersWhen
-        )(routes) -> yaml //(withCatchingErrors)
+        )(http4sRoutes) -> yaml
       }
 
       val httpApp: Kleisli[Task, Request[Task], Response[Task]] = {

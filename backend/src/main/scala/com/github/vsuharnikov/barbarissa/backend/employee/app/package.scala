@@ -4,8 +4,7 @@ import zio.Has
 import zio.logging.LogAnnotation
 
 package object app {
-  type EmployeeHttpApiRoutes    = Has[EmployeeHttpApiRoutes.Service]
-  type EmployeeHttpApiRhoRoutes = Has[EmployeeHttpApiRhoRoutes.Service]
+  type EmployeeHttpApiRoutes = Has[EmployeeHttpApiRoutes.Service]
 
   val requestIdLogAnnotation = LogAnnotation[String](
     name = "requestId",

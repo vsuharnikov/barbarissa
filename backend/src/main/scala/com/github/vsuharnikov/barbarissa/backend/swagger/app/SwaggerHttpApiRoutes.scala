@@ -25,13 +25,13 @@ object SwaggerHttpApiRoutes extends Serializable {
     private val yamlResponse        = Ok(yaml)
 
     override val routes = HttpRoutes.of[Task] {
-      case request @ GET -> Root / "docs"                => swaggerHtmlResponse
+      case GET -> Root / "docs"                          => swaggerHtmlResponse
       case GET -> Root / "api" / "docs" / "swagger.yaml" => yamlResponse
     }
 
     private def static(file: String): Task[Response[Task]] =
       StaticFile
         .fromResource[Task]("/" + file, blocker)
-        .getOrElseF { Ok("Not found") }
+        .getOrElseF { Ok(s"$file not found") }
   }
 }

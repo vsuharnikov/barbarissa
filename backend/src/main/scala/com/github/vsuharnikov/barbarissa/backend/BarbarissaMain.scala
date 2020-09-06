@@ -3,7 +3,7 @@ package com.github.vsuharnikov.barbarissa.backend
 import java.io.{PrintWriter, StringWriter}
 import java.security.Security
 import java.time.ZoneId
-import java.util.Properties
+import java.util.{Base64, Properties}
 
 import cats.data.Kleisli
 import cats.effect.Sync
@@ -51,7 +51,7 @@ import zio.interop.catz._
 import zio.interop.catz.implicits._
 import zio.logging._
 import zio.logging.slf4j.Slf4jLogger
-import zio.{Tag => _, TypeTag => _, config => _, _}
+import zio.{config => _, _}
 
 import scala.jdk.CollectionConverters._
 
@@ -66,7 +66,6 @@ object BarbarissaMain extends App {
                            absenceReasons: ConfigurableAbsenceReasonRepo.Config,
                            h2: H2DbTransactor.Config,
                            processing: ProcessingService.Config)
-  case class HttpApiConfig(host: String, port: Int)
 
   // prevents java from caching successful name resolutions, which is needed e.g. for proper NTP server rotation
   // http://stackoverflow.com/a/17219327
@@ -109,6 +108,8 @@ object BarbarissaMain extends App {
       }
       .mapError(desc => new IllegalArgumentException(s"Can't parse config:\n$desc"))
       .toLayer
+
+    val httpApiConfig = configLayer.narrow(_.barbarissa.backend.httpApi)
 
     val loggingLayer = Slf4jLogger.makeWithAnnotationsAsMdc(
       logFormat = (_, logEntry) => logEntry,
@@ -163,11 +164,11 @@ object BarbarissaMain extends App {
       employeeRepoLayer ++ absenceRepoLayer ++ absenceReasonRepoLayer ++ queueLayer ++ appointmentServiceLayer ++
       reportServiceLayer ++ mailServiceLayer >>> ProcessingService.live
 
-    val absenceHttpLayer     = absenceRepoLayer ++ absenceReasonRepoLayer >>> AbsenceHttpApiRoutes.live
-    val appointmentHttpLayer = employeeRepoLayer ++ absenceRepoLayer ++ appointmentServiceLayer >>> AppointmentHttpApiRoutes.live
-    val employeeHttpLayer    = loggingLayer ++ employeeRepoLayer >>> EmployeeHttpApiRoutes.live
-    val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
-    val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
+    val absenceHttpLayer     = httpApiConfig ++ absenceRepoLayer ++ absenceReasonRepoLayer >>> AbsenceHttpApiRoutes.live
+    val appointmentHttpLayer = httpApiConfig ++ employeeRepoLayer ++ absenceRepoLayer ++ appointmentServiceLayer >>> AppointmentHttpApiRoutes.live
+    val employeeHttpLayer    = httpApiConfig ++ loggingLayer ++ employeeRepoLayer >>> EmployeeHttpApiRoutes.live
+    val processingHttpLayer  = httpApiConfig ++ processingServiceLayer >>> ProcessingHttpApiRoutes.live
+    val queueHttpLayer       = httpApiConfig ++ queueLayer >>> QueueHttpApiRoutes.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++
@@ -305,4 +306,8 @@ object BarbarissaMain extends App {
 
   implicit def circeJsonDecoder[F[_], A: Decoder](implicit sync: Sync[F]): EntityDecoder[F, A] = jsonOf[F, A]
   implicit def circeJsonEncoder[F[_], A: Encoder]: EntityEncoder[F, A]                         = jsonEncoderOf[F, A]
+}
+
+case class HttpApiConfig(host: String, port: Int, apiKeyHash: String) {
+  val apiKeyHashBytes: Array[Byte] = Base64.getDecoder.decode(apiKeyHash)
 }

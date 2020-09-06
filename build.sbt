@@ -9,9 +9,11 @@ inScope(Global)(Seq(
 
   scalaVersion := Dependencies.versionOf.scala,
   scalacOptions ++= Seq(
+    "-feature",
     "-deprecation",
     "-Ymacro-annotations",
     "-language:higherKinds",
+    "-language:existentials",
     "-Ybackend-parallelism", "4"
   )
 ))

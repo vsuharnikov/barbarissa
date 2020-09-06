@@ -3,6 +3,7 @@ package com.github.vsuharnikov.barbarissa.backend.employee.app
 import java.nio.charset.StandardCharsets
 
 import cats.syntax.option._
+import com.github.vsuharnikov.barbarissa.backend.HttpApiConfig
 import com.github.vsuharnikov.barbarissa.backend.employee.app.entities._
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
@@ -23,83 +24,81 @@ import zio.{ZIO, ZLayer}
 object EmployeeHttpApiRoutes extends Serializable {
   trait Service extends HasHttp4sRoutes
 
-  val live = ZLayer.fromServices[Logger[String], EmployeeRepo.Service, Service] { (logger, employeeRepo) =>
+  val live = ZLayer.fromServices[HttpApiConfig, Logger[String], EmployeeRepo.Service, Service] { (config, logger, employeeRepo) =>
     new Service with TapirCommonEntities {
       val tag = "employee"
 
-      val get = endpoint.get
+      val securedEndpoint = TapirSecuredEndpoint(config.apiKeyHashBytes)
+
+      val get = securedEndpoint.get
         .in("api" / "v0" / "employee" / employeeIdPath)
         .out(jsonBody[HttpV0Employee])
-        .errorOut(errorOut)
         .tag(tag)
         .description("Gets an employee by id")
+        .serverLogicRecoverErrors {
+          case (_, employeeId) =>
+            employeeRepo.unsafeGet(employeeId).map(httpEmployeeFrom)
+        }
 
-      val getRoute = get.toRoutes { employeeId =>
-        employeeRepo.unsafeGet(employeeId).map(httpEmployeeFrom)
-      }
-
-      val update = endpoint.patch
+      val update = securedEndpoint.patch
         .in("api" / "v0" / "employee" / employeeIdPath)
         .in(jsonBody[HttpV0UpdateEmployee])
         .out(jsonBody[HttpV0Employee])
-        .errorOut(errorOut)
         .tag(tag)
         .description("Updates an employee by id")
+        .serverLogicRecoverErrors {
+          case (_, (employeeId, api)) =>
+            for {
+              orig    <- employeeRepo.unsafeGet(employeeId)
+              _       <- employeeRepo.update(draft(orig, api))
+              updated <- employeeRepo.unsafeGet(employeeId)
+            } yield httpEmployeeFrom(updated)
+        }
 
-      val updateRoute = update.toRoutes {
-        case (employeeId, api) =>
-          for {
-            orig    <- employeeRepo.unsafeGet(employeeId)
-            _       <- employeeRepo.update(draft(orig, api))
-            updated <- employeeRepo.unsafeGet(employeeId)
-          } yield httpEmployeeFrom(updated)
-      }
-
-      val batchUpdate = endpoint.patch
+      val batchUpdate = securedEndpoint.patch
         .in("api" / "vo" / "employee")
         .in(multipartBody)
         .out(jsonBody[HttpV0BatchUpdateResponse])
-        .errorOut(errorOut)
         .tag(tag)
         .description("Batch update for employees")
+        .serverLogicRecoverErrors {
+          case (_, parts) =>
+            parts.headOption match {
+              case None => ZIO.fail(ApiError.clientError("Expected at least one CSV file"))
+              case Some(value) =>
+                for {
+                  invalid <- {
+                    val csvContent = new String(value.body, StandardCharsets.UTF_8)
+                    val reader     = csvContent.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
 
-      val batchUpdateRoute = batchUpdate.toRoutes { parts =>
-        parts.headOption match {
-          case None => ZIO.fail(ApiError.clientError("Expected at least one CSV file"))
-          case Some(value) =>
-            for {
-              invalid <- {
-                val csvContent = new String(value.body, StandardCharsets.UTF_8)
-                val reader     = csvContent.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
+                    val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
+                      case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
+                      case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
+                    }
 
-                val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
-                  case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
-                  case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
-                }
-
-                ZIO
-                  .foreach_(valid) { csv =>
-                    val update = for {
-                      orig <- employeeRepo.search(csv.email)
-                      _ <- ZIO.foreach(orig) { orig =>
-                        employeeRepo
-                          .update(
-                            orig.copy(
-                              localizedName = csv.name.some,
-                              companyId = csv.companyId.some,
-                              position = csv.position.some,
-                              sex = csv.sex.some
-                            ))
+                    ZIO
+                      .foreach_(valid) { csv =>
+                        val update = for {
+                          orig <- employeeRepo.search(csv.email)
+                          _ <- ZIO.foreach(orig) { orig =>
+                            employeeRepo
+                              .update(
+                                orig.copy(
+                                  localizedName = csv.name.some,
+                                  companyId = csv.companyId.some,
+                                  position = csv.position.some,
+                                  sex = csv.sex.some
+                                ))
+                          }
+                        } yield ()
+                        update.ignore
                       }
-                    } yield ()
-                    update.ignore
+                      .tap(_ => ZIO.effect(logger.info("Done the batch update")))
+                      .forkDaemon *> ZIO.succeed(invalid)
                   }
-                  .tap(_ => ZIO.effect(logger.info("Done the batch update")))
-                  .forkDaemon *> ZIO.succeed(invalid)
-              }
-            } yield HttpV0BatchUpdateResponse(invalid)
+                } yield HttpV0BatchUpdateResponse(invalid)
+            }
         }
-      }
 
       private def httpEmployeeFrom(domain: Employee): HttpV0Employee = HttpV0Employee(
         id = domain.employeeId.asString,
@@ -126,8 +125,9 @@ object EmployeeHttpApiRoutes extends Serializable {
           CsvEmployee(name, position, email, sex, CompanyId(rawCompanyId))
       }
 
-      override val openApiDoc   = List(get, update, batchUpdate).toOpenAPI("", "")
-      override val http4sRoutes = List(getRoute, updateRoute, batchUpdateRoute)
+      val endpoints             = List(get, update, batchUpdate)
+      override val openApiDoc   = endpoints.toOpenAPI("", "")
+      override val http4sRoutes = endpoints.map(_.toRoutes)
     }
   }
 

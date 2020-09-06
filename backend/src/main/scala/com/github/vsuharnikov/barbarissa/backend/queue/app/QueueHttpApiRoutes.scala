@@ -1,5 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.queue.app
 
+import com.github.vsuharnikov.barbarissa.backend.HttpApiConfig
 import com.github.vsuharnikov.barbarissa.backend.employee.app.entities._
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
@@ -17,30 +18,30 @@ import zio.macros.accessible
 object QueueHttpApiRoutes extends Serializable {
   trait Service extends HasHttp4sRoutes
 
-  val live = ZLayer.fromService[AbsenceQueue.Service, Service] { absenceQueue =>
+  val live = ZLayer.fromServices[HttpApiConfig, AbsenceQueue.Service, Service] { (config, absenceQueue) =>
     new Service with TapirCommonEntities {
-      val add = endpoint.post
+      val securedEndpoint = TapirSecuredEndpoint(config.apiKeyHashBytes)
+
+      val add = securedEndpoint.post
         .in("api" / "v0" / "queue" / "add")
         .in(jsonBody[HttpV0AbsenceQueueItem])
         .out(jsonBody[HttpMessage])
-        .errorOut(errorOut)
         .tag("queue")
         .description("Add an item to the queue")
-
-      val addRoute = add.toRoutes { api =>
-        val draft = AbsenceQueueItem(
-          absenceId = AbsenceId(api.absenceId),
-          done = api.done,
-          claimSent = api.done,
-          appointmentCreated = api.appointmentCreated,
-          retries = api.retries
-        )
-        absenceQueue.add(List(draft)).as(HttpMessage("Added"))
-      }
+        .serverLogicRecoverErrors {
+          case (_, api) =>
+            val draft = AbsenceQueueItem(
+              absenceId = AbsenceId(api.absenceId),
+              done = api.done,
+              claimSent = api.done,
+              appointmentCreated = api.appointmentCreated,
+              retries = api.retries
+            )
+            absenceQueue.add(List(draft)).as(HttpMessage("Added"))
+        }
 
       override val openApiDoc   = List(add).toOpenAPI("", "")
-      override val http4sRoutes = List(addRoute)
+      override val http4sRoutes = List(add.toRoutes)
     }
-
   }
 }

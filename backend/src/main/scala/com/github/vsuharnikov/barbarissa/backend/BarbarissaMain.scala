@@ -34,14 +34,10 @@ import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.Logger
 import org.http4s.implicits._
-import org.http4s.rho.bits.PathAST.{PathMatch, TypedPath}
-import org.http4s.rho.swagger.models.{ArrayModel, Info, RefProperty, Tag}
-import org.http4s.rho.swagger.{SwaggerSupport, TypeBuilder, models}
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.{RequestId, ResponseLogger}
 import org.http4s.util.CaseInsensitiveString
-import shapeless.HNil
 import sttp.tapir.openapi.OpenAPI
 import sttp.tapir.openapi.circe.yaml._
 import zio.blocking.Blocking
@@ -58,8 +54,6 @@ import zio.logging.slf4j.Slf4jLogger
 import zio.{Tag => _, TypeTag => _, config => _, _}
 
 import scala.jdk.CollectionConverters._
-import scala.reflect.ClassTag
-import scala.reflect.runtime.universe._
 
 object BarbarissaMain extends App {
   case class GlobalConfig(barbarissa: BarbarissaConfig)
@@ -174,7 +168,6 @@ object BarbarissaMain extends App {
     val employeeHttpLayer    = loggingLayer ++ employeeRepoLayer >>> EmployeeHttpApiRoutes.live
     val processingHttpLayer  = processingServiceLayer >>> ProcessingHttpApiRoutes.live
     val queueHttpLayer       = queueLayer >>> QueueHttpApiRoutes.live
-//    val swaggerHttpLayer     = Blocking.live >>> SwaggerHttpApiRoutes.live
 
     val appLayer: ZLayer[ZEnv, Throwable, AppEnvironment] =
       Clock.live ++
@@ -185,8 +178,7 @@ object BarbarissaMain extends App {
         appointmentHttpLayer ++
         employeeHttpLayer ++
         processingHttpLayer ++
-        queueHttpLayer /*++
-        swaggerHttpLayer*/
+        queueHttpLayer
 
     // TODO ProcessingService.start
     val app: ZIO[AppEnvironment, Throwable, Unit] = for {
@@ -211,24 +203,6 @@ object BarbarissaMain extends App {
 
   private def makeHttpServer: ZIO[AppEnvironment, Throwable, Unit] =
     ZIO.runtime[AppEnvironment].flatMap { implicit rts =>
-      val s = SwaggerSupport[Task]
-      import s._
-
-      val rhoMiddleware = createRhoMiddleware(
-        apiInfo = Info(title = "Barbarissa Backend", version = Version.VersionString),
-        apiPath = TypedPath[Task, HNil](PathMatch("api")) / "docs" / "swagger.json",
-        //          swaggerFormats = DefaultSwaggerFormats
-        //            .withSerializers(typeOf[ApiV0Countries], mkSwaggerArrayModel[ApiV0Countries, ApiV0Country])
-        //            .withSerializers(typeOf[ApiV0Cities], mkSwaggerArrayModel[ApiV0Cities, ApiV0City]),
-        tags = List(
-          Tag(name = "employee"),
-          Tag(name = "absence"),
-          Tag(name = "appointment"),
-          Tag(name = "queue"),
-          Tag(name = "processing"),
-        )
-      )
-
       val log = rts.environment.get[Logger[String]]
 
       // TODO AppEnvironment layer? huh
@@ -268,8 +242,6 @@ object BarbarissaMain extends App {
               )
           }
           .toYaml
-
-        // val withCatchingErrors = catchErrors(routes)
 
         ResponseLogger.httpRoutes[Task, Request[Task]](
           logHeaders = true,
@@ -319,19 +291,6 @@ object BarbarissaMain extends App {
     x.printStackTrace(new PrintWriter(sw))
     s"$x\n${sw.toString}"
   }
-
-  private def mkSwaggerArrayModel[ArrayT, ItemT: TypeTag](implicit act: ClassTag[ArrayT], ict: ClassTag[ItemT]): Set[models.Model] = {
-    val className = act.runtimeClass.getSimpleName
-    mkSwaggerModel[ItemT] + ArrayModel(
-      id = className,
-      id2 = className,
-      `type` = "array".some,
-      items = RefProperty(ref = ict.runtimeClass.getSimpleName).some
-    )
-  }
-
-  private def mkSwaggerModel[T](implicit tt: TypeTag[T]) =
-    TypeBuilder.collectModels(tt.tpe, Set.empty, org.http4s.rho.swagger.DefaultSwaggerFormats, typeOf[AppTask[_]])
 
   implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap(ZoneId.of, _.getId)
   implicit val propertiesDescriptor: Descriptor[Properties] = Descriptor[Map[String, String]].xmap(

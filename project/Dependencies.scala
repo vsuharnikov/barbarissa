@@ -95,7 +95,7 @@ object Dependencies {
       "tapir-json-circe",
       "tapir-openapi-docs",
       "tapir-openapi-circe-yaml"
-    ).map("com.softwaremill.sttp.tapir" %% _ % versionOf.tapir) ++ List("org.http4s" %% "rho-swagger" % "0.20.0")
+    ).map("com.softwaremill.sttp.tapir" %% _ % versionOf.tapir)
 
   val reports = Seq(
     "com.deepoove" % "poi-tl" % versionOf.poiTl

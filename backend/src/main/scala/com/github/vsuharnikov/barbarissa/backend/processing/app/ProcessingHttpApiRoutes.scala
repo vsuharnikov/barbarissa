@@ -2,52 +2,69 @@ package com.github.vsuharnikov.barbarissa.backend.processing.app
 
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.shared.app._
-import com.github.vsuharnikov.barbarissa.backend.shared.domain.AbsenceId
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.rho.RhoRoutes
-import org.http4s.rho.swagger.SwaggerSupport
+import sttp.tapir._
+import sttp.tapir.docs.openapi._
+import sttp.tapir.json.circe.jsonBody
+import sttp.tapir.server.http4s.ztapir._
+import zio.ZLayer
 import zio.interop.catz._
 import zio.macros.accessible
-import zio.{Task, ZLayer}
 
 @accessible
 object ProcessingHttpApiRoutes extends Serializable {
-  trait Service extends HasRoutes
+  trait Service extends HasHttp4sRoutes
 
   val live = ZLayer.fromService[ProcessingService.Service, Service] { processingService =>
-    new Service with JsonEntitiesEncoding[Task] {
-      private val swaggerSyntax = new SwaggerSupport[Task] {}
-      import swaggerSyntax._
+    new Service with TapirCommonEntities {
+      val tag = "processing"
 
-      override val rhoRoutes: RhoRoutes[Task] = new RhoRoutes[Task] {
-        val parsers = new RoutesParsers[Task]()
-        import parsers._
+      val start = endpoint.post
+        .in("api" / "v0" / "processing" / "start")
+        .out(jsonBody[HttpMessage])
+        .errorOut(errorOut)
+        .tag(tag)
+        .description("Starts schedules")
 
-        "Starts schedules" **
-          "processing" @@
-            POST / "api" / "v0" / "processing" / "start" |>> {
-          processingService.start *> Ok("Started")
-        }
-
-        "Refreshes the queue" **
-          "processing" @@
-            POST / "api" / "v0" / "processing" / "refreshQueue" |>> {
-          processingService.refreshQueue *> Ok("Done") // TODO
-        }
-
-        "Process items in the queue" **
-          "processing" @@
-            POST / "api" / "v0" / "processing" / "processQueue" |>> {
-          processingService.processQueue *> Ok("Processed")
-        }
-
-        "Creates a claim for employee's absence" **
-          "absence" @@
-            POST / "api" / "v0" / "processing" / "createClaim" /
-          "absence" / pathVar[AbsenceId]("absenceId") |>> { (aid: AbsenceId) =>
-          processingService.createClaim(aid).flatMap(Ok(_))
-        }
+      val startRoute = start.toRoutes { _ =>
+        processingService.start.as(HttpMessage("Started"))
       }
+
+      val refreshQueue = endpoint.post
+        .in("api" / "v0" / "processing" / "refreshQueue")
+        .out(jsonBody[HttpMessage])
+        .errorOut(errorOut)
+        .tag(tag)
+        .description("Refreshes the queue")
+
+      val refreshQueueRoute = refreshQueue.toRoutes { _ =>
+        processingService.refreshQueue.as(HttpMessage("Started"))
+      }
+
+      val processCurrent = endpoint.post
+        .in("api" / "v0" / "processing" / "processCurrent")
+        .out(jsonBody[HttpMessage])
+        .errorOut(errorOut)
+        .tag(tag)
+        .description("Process items in the queue")
+
+      val processCurrentRoute = processCurrent.toRoutes { _ =>
+        processingService.processQueue.as(HttpMessage("Started"))
+      }
+
+      val createClaim = endpoint.post
+        .in("api" / "v0" / "processing" / "createClaim" / "absence" / absenceIdPath)
+        .out(byteArrayBody)
+        .errorOut(errorOut)
+        .tag(tag)
+        .description("Creates a claim for employee's absence")
+
+      val createClaimRoute = createClaim.toRoutes { absenceId =>
+        processingService.createClaim(absenceId)
+      }
+
+      override val openApiDoc   = List(start, refreshQueue, processCurrent, createClaim).toOpenAPI("", "")
+      override val http4sRoutes = List(startRoute, refreshQueueRoute, processCurrentRoute, createClaimRoute)
     }
   }
 }

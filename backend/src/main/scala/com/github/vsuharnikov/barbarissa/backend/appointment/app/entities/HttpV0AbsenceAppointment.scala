@@ -1,4 +1,4 @@
-package com.github.vsuharnikov.barbarissa.backend.absence.app.entities
+package com.github.vsuharnikov.barbarissa.backend.appointment.app.entities
 
 import java.time.LocalDate
 

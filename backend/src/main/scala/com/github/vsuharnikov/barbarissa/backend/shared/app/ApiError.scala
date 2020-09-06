@@ -2,16 +2,16 @@ package com.github.vsuharnikov.barbarissa.backend.shared.app
 
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.DomainError
 import io.circe.Json
+import io.circe.generic.JsonCodec
 import org.http4s.Status
 
 class ApiError(val status: Status, val name: String, override val getMessage: String) extends RuntimeException("", null, true, false) {
-  def body: Json = Json.obj(
-    "name"    -> Json.fromString(name),
-    "message" -> Json.fromString(getMessage)
-  )
+  def body = ApiError.Json(name, getMessage)
 }
 
 object ApiError {
+  @JsonCodec case class Json(name: String, message: String)
+
   def from(x: DomainError)         = new ApiError(statusFrom(x), x.name, x.getMessage)
   def clientError(message: String) = new ApiError(Status.BadRequest, "ClientError", message)
 

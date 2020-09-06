@@ -1,15 +1,13 @@
 package com.github.vsuharnikov.barbarissa.backend.swagger.app
 
 import cats.effect.Blocker
-import com.github.vsuharnikov.barbarissa.backend.shared.app._
+import org.http4s._
+import org.http4s.dsl.Http4sDsl
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.{HttpRoutes, Request, StaticFile}
-import zio.blocking.Blocking
+import zio.Task
+import zio.internal.Executor
 import zio.interop.catz._
 import zio.macros.accessible
-import zio.{Task, ZLayer}
-import org.http4s._
-import org.http4s.dsl.io._
 
 @accessible
 object SwaggerHttpApiRoutes extends Serializable {
@@ -17,18 +15,23 @@ object SwaggerHttpApiRoutes extends Serializable {
     def routes: HttpRoutes[Task]
   }
 
-  val live = ZLayer.fromService[Blocking.Service, Service] { blocking =>
-    new Service with JsonEntitiesEncoding[Task] {
-      val blocker = Blocker.liftExecutionContext(blocking.blockingExecutor.asEC)
+  def live(blockingExecutor: Executor, yaml: String) = new Service {
+    private val dsl = Http4sDsl[Task]
+    import dsl._
 
-      override val routes = HttpRoutes.of[Task] {
-        case request @ GET -> Root / "docs" => static("swagger.html", request)
-      }
+    private val blocker: Blocker = Blocker.liftExecutionContext(blockingExecutor.asEC)
 
-      def static(file: String, request: Request[Task]) =
-        StaticFile
-          .fromResource("/" + file, blocker, Some(request))
-          .getOrElse { Response[Task](Status.NotFound).withEntity("Not found") }
+    private val swaggerHtmlResponse = static("swagger.html")
+    private val yamlResponse        = Ok(yaml)
+
+    override val routes = HttpRoutes.of[Task] {
+      case request @ GET -> Root / "docs"                => swaggerHtmlResponse
+      case GET -> Root / "api" / "docs" / "swagger.yaml" => yamlResponse
     }
+
+    private def static(file: String): Task[Response[Task]] =
+      StaticFile
+        .fromResource[Task]("/" + file, blocker)
+        .getOrElseF { Ok("Not found") }
   }
 }

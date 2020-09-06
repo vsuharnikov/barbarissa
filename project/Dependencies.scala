@@ -23,6 +23,7 @@ object Dependencies {
     val classGraph      = "4.8.89"
     val doobie          = "0.9.0"
     val kantan          = "0.6.1"
+    val tapir           = "0.16.16"
   }
 
   val fp = Seq(
@@ -81,14 +82,20 @@ object Dependencies {
     "padeg" % "lib" % "3.3.0.24" from "https://dl.bintray.com/jbaruch/jbaruch-maven/padeg/lib/padeg/3.3.0.24/padeg-3.3.0.24.jar"
   )
 
-  val http = Seq(
-    "org.http4s" %% "http4s-blaze-server",
-    "org.http4s" %% "http4s-blaze-client",
-    "org.http4s" %% "http4s-dsl",
-    "org.http4s" %% "http4s-circe"
-  ).map(_        % versionOf.http4s) ++ Seq(
-    "org.http4s" %% "rho-swagger" % "0.20.0"
-  )
+  val http = List(
+    "http4s-blaze-server",
+    "http4s-blaze-client",
+    "http4s-dsl",
+    "http4s-circe"
+  ).map("org.http4s" %% _ % versionOf.http4s) ++
+    List(
+      "tapir-core",
+      "tapir-zio",
+      "tapir-zio-http4s-server",
+      "tapir-json-circe",
+      "tapir-openapi-docs",
+      "tapir-openapi-circe-yaml"
+    ).map("com.softwaremill.sttp.tapir" %% _ % versionOf.tapir)
 
   val reports = Seq(
     "com.deepoove" % "poi-tl" % versionOf.poiTl

@@ -1,6 +1,6 @@
 package com.github.vsuharnikov.barbarissa.backend.employee.app
 
-import java.nio.charset.StandardCharsets
+import java.io.File
 
 import cats.syntax.option._
 import com.github.vsuharnikov.barbarissa.backend.HttpApiConfig
@@ -11,6 +11,7 @@ import com.github.vsuharnikov.barbarissa.backend.shared.domain._
 import kantan.csv._
 import kantan.csv.ops._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import sttp.model.Part
 import sttp.tapir._
 import sttp.tapir.docs.openapi._
 import sttp.tapir.json.circe._
@@ -55,49 +56,45 @@ object EmployeeHttpApiRoutes extends Serializable {
             } yield httpEmployeeFrom(updated)
         }
 
+      case class BatchUpdateData(data: Part[File])
       val batchUpdate = securedEndpoint.patch
-        .in("api" / "vo" / "employee")
-        .in(multipartBody)
+        .in("api" / "v0" / "employee")
+        .in(multipartBody[BatchUpdateData])
         .out(jsonBody[HttpV0BatchUpdateResponse])
         .tag(tag)
         .description("Batch update for employees")
         .serverLogicRecoverErrors {
           case (_, parts) =>
-            parts.headOption match {
-              case None => ZIO.fail(ApiError.clientError("Expected at least one CSV file"))
-              case Some(value) =>
-                for {
-                  invalid <- {
-                    val csvContent = new String(value.body, StandardCharsets.UTF_8)
-                    val reader     = csvContent.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
+            for {
+              invalid <- {
+                val reader = parts.data.body.asCsvReader[CsvEmployee](CsvConfiguration.rfc)
 
-                    val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
-                      case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
-                      case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
-                    }
+                val (invalid, valid) = reader.zipWithIndex.foldLeft((List.empty[String], List.empty[CsvEmployee])) {
+                  case ((invalid, valid), (Left(x), i))  => (s"$i: ${x.getMessage}" :: invalid, valid)
+                  case ((invalid, valid), (Right(x), _)) => (invalid, x :: valid)
+                }
 
-                    ZIO
-                      .foreach_(valid) { csv =>
-                        val update = for {
-                          orig <- employeeRepo.search(csv.email)
-                          _ <- ZIO.foreach(orig) { orig =>
-                            employeeRepo
-                              .update(
-                                orig.copy(
-                                  localizedName = csv.name.some,
-                                  companyId = csv.companyId.some,
-                                  position = csv.position.some,
-                                  sex = csv.sex.some
-                                ))
-                          }
-                        } yield ()
-                        update.ignore
+                ZIO
+                  .foreach_(valid) { csv =>
+                    val update = for {
+                      orig <- employeeRepo.search(csv.email)
+                      _ <- ZIO.foreach(orig) { orig =>
+                        employeeRepo
+                          .update(
+                            orig.copy(
+                              localizedName = csv.name.some,
+                              companyId = csv.companyId.some,
+                              position = csv.position.some,
+                              sex = csv.sex.some
+                            ))
                       }
-                      .tap(_ => ZIO.effect(logger.info("Done the batch update")))
-                      .forkDaemon *> ZIO.succeed(invalid)
+                    } yield ()
+                    update.ignore
                   }
-                } yield HttpV0BatchUpdateResponse(invalid)
-            }
+                  .tap(_ => ZIO.effect(logger.info("Done the batch update")))
+                  .forkDaemon *> ZIO.succeed(invalid)
+              }
+            } yield HttpV0BatchUpdateResponse(invalid)
         }
 
       private def httpEmployeeFrom(domain: Employee): HttpV0Employee = HttpV0Employee(

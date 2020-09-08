@@ -17,6 +17,7 @@ import com.github.vsuharnikov.barbarissa.backend.appointment.infra.exchange.MsEx
 import com.github.vsuharnikov.barbarissa.backend.employee.app.{EmployeeHttpApiRoutes, requestIdLogAnnotation}
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.db.DbCachedEmployeeRepo
 import com.github.vsuharnikov.barbarissa.backend.employee.infra.jira.JiraEmployeeRepo
+import com.github.vsuharnikov.barbarissa.backend.error.showWithStackTrace
 import com.github.vsuharnikov.barbarissa.backend.processing.app.ProcessingHttpApiRoutes
 import com.github.vsuharnikov.barbarissa.backend.processing.infra.ProcessingService
 import com.github.vsuharnikov.barbarissa.backend.queue.app.QueueHttpApiRoutes
@@ -87,14 +88,7 @@ object BarbarissaMain extends App {
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
 
-  override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
-    val program = makeHttpClient.flatMap(makeProgram)
-
-    program.foldM(
-      e => putStrLn(showWithStackTrace(e)) *> ZIO.succeed(ExitCode.failure),
-      _ => ZIO.succeed(ExitCode.success)
-    )
-  }
+  override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = makeHttpClient.flatMap(makeProgram).exitCode
 
   private def makeProgram(httpClient: TaskManaged[Client[Task]]): RIO[ZEnv, Unit] = {
     val configLayer = ZIO
@@ -286,12 +280,6 @@ object BarbarissaMain extends App {
         .compile[Task, Task, cats.effect.ExitCode]
         .drain
     }
-
-  private def showWithStackTrace(x: Throwable): String = {
-    val sw = new StringWriter
-    x.printStackTrace(new PrintWriter(sw))
-    s"$x\n${sw.toString}"
-  }
 
   implicit val zoneIdDescriptor: Descriptor[ZoneId] = Descriptor[String].xmap(ZoneId.of, _.getId)
   implicit val propertiesDescriptor: Descriptor[Properties] = Descriptor[Map[String, String]].xmap(

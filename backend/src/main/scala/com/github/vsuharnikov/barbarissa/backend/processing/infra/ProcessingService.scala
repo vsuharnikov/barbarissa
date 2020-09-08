@@ -11,6 +11,7 @@ import com.github.vsuharnikov.barbarissa.backend.absence.domain._
 import com.github.vsuharnikov.barbarissa.backend.appointment.domain.AppointmentService.SearchFilter
 import com.github.vsuharnikov.barbarissa.backend.appointment.domain.{Appointment, AppointmentService}
 import com.github.vsuharnikov.barbarissa.backend.employee.domain._
+import com.github.vsuharnikov.barbarissa.backend.error.showWithStackTrace
 import com.github.vsuharnikov.barbarissa.backend.meta.ToArgs
 import com.github.vsuharnikov.barbarissa.backend.queue.domain.{AbsenceQueue, AbsenceQueueItem}
 import com.github.vsuharnikov.barbarissa.backend.shared.domain.MailService.EmailAddress
@@ -133,6 +134,9 @@ object ProcessingService {
                     .when(!x.appointmentCreated) {
                       createAppointment(employee, absence, absenceReason)
                     }
+                    .catchAllDefect { e =>
+                      log.error(s"Found a defect during an appointment creation: ${showWithStackTrace(e)}") *> ZIO.succeed(false)
+                    }
                     .foldM(
                       e => log.warn(s"Can't send a claim: ${e.getMessage}") *> ZIO.succeed(false),
                       _ => ZIO.succeed(true)
@@ -140,6 +144,9 @@ object ProcessingService {
                   claimSent <- ZIO
                     .when(!x.claimSent) {
                       sendClaim(employee, absence, absenceReason)
+                    }
+                    .catchAllDefect { e =>
+                      log.error(s"Found a during a claim sending: ${showWithStackTrace(e)}") *> ZIO.succeed(false)
                     }
                     .foldM(
                       e => log.warn(s"Can't send a claim: ${e.getMessage}") *> ZIO.succeed(false),

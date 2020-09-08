@@ -9,7 +9,7 @@ import com.github.vsuharnikov.barbarissa.backend.shared.infra.exchange.MsExchang
 import microsoft.exchange.webservices.data.core.enumeration.property._
 import microsoft.exchange.webservices.data.core.enumeration.search.{FolderTraversal, LogicalOperator}
 import microsoft.exchange.webservices.data.core.service.folder.{CalendarFolder, Folder}
-import microsoft.exchange.webservices.data.core.service.item.{Appointment => MsAppointment, Item}
+import microsoft.exchange.webservices.data.core.service.item.{Item, Appointment => MsAppointment}
 import microsoft.exchange.webservices.data.core.service.schema.{AppointmentSchema, FolderSchema}
 import microsoft.exchange.webservices.data.core.{ExchangeService, PropertySet}
 import microsoft.exchange.webservices.data.property.complex.time.OlsonTimeZoneDefinition
@@ -19,7 +19,7 @@ import microsoft.exchange.webservices.data.search.filter.SearchFilter
 import microsoft.exchange.webservices.data.search.filter.SearchFilter.SearchFilterCollection
 import microsoft.exchange.webservices.data.search.{FindItemsResults, FolderView, ItemView}
 import zio._
-import zio.blocking.{Blocking, effectBlockingIO}
+import zio.blocking.Blocking
 import zio.clock.Clock
 
 import scala.jdk.CollectionConverters._
@@ -52,15 +52,18 @@ object MsExchangeAppointmentService {
     .accessM[Dependencies] { env =>
       val config      = env.get[Config]
       val es          = env.get[ExchangeService]
+      val blocking    = env.get[Blocking.Service]
       val retryPolicy = MsExchangeService.retryPolicy(config.retryPolicy).provide(env)
 
       for {
-        calendarFolder <- effectBlockingIO {
-          config.targetCalendarFolder match {
-            case TargetCalendarFolderConfig.AutoDiscover    => findCalendarFolder(es)
-            case TargetCalendarFolderConfig.Fixed(uniqueId) => CalendarFolder.bind(es, new FolderId(uniqueId))
+        calendarFolder <- blocking
+          .effectBlocking {
+            config.targetCalendarFolder match {
+              case TargetCalendarFolderConfig.AutoDiscover    => findCalendarFolder(es)
+              case TargetCalendarFolderConfig.Fixed(uniqueId) => CalendarFolder.bind(es, new FolderId(uniqueId))
+            }
           }
-        }.retry(retryPolicy)
+          .retry(retryPolicy)
       } yield
         new AppointmentService.Service {
           private val msExchangeTimeZone = new OlsonTimeZoneDefinition(TimeZone.getTimeZone(config.zoneId))
@@ -75,14 +78,15 @@ object MsExchangeAppointmentService {
               .provide(env)
 
           override def add(appointment: Appointment): Task[Unit] =
-            effectBlockingIO(toMsAppointment(appointment).save(calendarFolder.getId))
+            blocking
+              .effectBlocking(toMsAppointment(appointment).save(calendarFolder.getId))
               .retry(retryPolicy)
               .provide(env)
 
           private def has(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
-            internalHas(view, searchFilter, jiraTaskValue).provide(env)
+            internalHas(view, searchFilter, jiraTaskValue)
 
-          private def internalHas(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): ZIO[Blocking, Throwable, Boolean] =
+          private def internalHas(view: ItemView, searchFilter: SearchFilter, jiraTaskValue: String): Task[Boolean] =
             for {
               items  <- findItemsF(view, searchFilter)
               hasNow <- hasInF(items, jiraTaskValue)
@@ -94,7 +98,7 @@ object MsExchangeAppointmentService {
             } yield has
 
           private def hasInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Boolean] =
-            effectBlockingIO(hasIn(items, jiraTaskValue)).provide(env)
+            blocking.effectBlocking(hasIn(items, jiraTaskValue))
 
           private def hasIn(items: FindItemsResults[Item], jiraTaskValue: String): Boolean =
             if (items.getItems.isEmpty) false
@@ -119,10 +123,10 @@ object MsExchangeAppointmentService {
             } yield appointment
 
           private def findItemsF(view: ItemView, searchFilter: SearchFilter): Task[FindItemsResults[Item]] =
-            effectBlockingIO(calendarFolder.findItems(searchFilter, view)).provide(env)
+            blocking.effectBlocking(calendarFolder.findItems(searchFilter, view))
 
           private def getInF(items: FindItemsResults[Item], jiraTaskValue: String): Task[Option[MsAppointment]] =
-            effectBlockingIO(getIn(items, jiraTaskValue)).provide(env)
+            blocking.effectBlocking(getIn(items, jiraTaskValue))
 
           private def getIn(items: FindItemsResults[Item], jiraTaskValue: String): Option[MsAppointment] =
             if (items.getItems.isEmpty) None

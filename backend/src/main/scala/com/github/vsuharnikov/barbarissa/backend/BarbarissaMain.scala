@@ -39,7 +39,7 @@ import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.{RequestId, ResponseLogger}
 import org.http4s.util.CaseInsensitiveString
-import sttp.tapir.openapi.OpenAPI
+import sttp.tapir.openapi.{Info, License, OpenAPI}
 import sttp.tapir.openapi.circe.yaml._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -47,7 +47,7 @@ import zio.config._
 import zio.config.magnolia.DeriveConfigDescriptor.{Descriptor, descriptor}
 import zio.config.syntax._
 import zio.config.typesafe.TypesafeConfigSource
-import zio.console.putStrLn
+import zio.console.{putStr, putStrLn}
 import zio.interop.catz._
 import zio.interop.catz.implicits._
 import zio.logging._
@@ -88,7 +88,8 @@ object BarbarissaMain extends App {
   private type AppTask[A]  = RIO[AppEnvironment, A]
   private type UAppTask[A] = URIO[AppEnvironment, A]
 
-  override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = makeHttpClient.flatMap(makeProgram).exitCode
+  override def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
+    makeHttpClient.flatMap(makeProgram).exitCode
 
   private def makeProgram(httpClient: TaskManaged[Client[Task]]): RIO[ZEnv, Unit] = {
     val configLayer = ZIO
@@ -236,6 +237,14 @@ object BarbarissaMain extends App {
                 security = x.security ++ r.security
               )
           }
+          .copy(
+            info = Info(
+              title = "Barbarissa",
+              version = Version.VersionString,
+              description = "A service that helps users to automate HR things".some,
+              license = License("⚖ MIT License", none).some
+            )
+          )
           .toYaml
 
         ResponseLogger.httpRoutes[Task, Request[Task]](

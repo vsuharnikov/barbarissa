@@ -51,8 +51,12 @@ object JiraEmployeeRepo {
                     ZIO.fail(DomainError.UnhandledError(s"Multiple users have same email: ${xs.map(_.name).mkString(", ")}"))
                 }
                 extended <- basic match {
-                  case Some(x) => JiraApi.getUserExtendedData(x.name)
-                  case None    => ZIO.none
+                  case Some(x) =>
+                    JiraApi.getUserExtendedData(x.name).catchAll { e =>
+                      log.warn(s"Can't get an extended data of ${x.name}: ${Option(e.getMessage).getOrElse("<null>")}") *>
+                        ZIO.none
+                    }
+                  case None => ZIO.none
                 }
               } yield toDomain(basic, extended.getOrElse(JiraExtendedUserData.empty))
             }

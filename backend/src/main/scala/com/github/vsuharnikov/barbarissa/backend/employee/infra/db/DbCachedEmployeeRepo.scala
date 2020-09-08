@@ -29,7 +29,7 @@ object DbCachedEmployeeRepo {
               orig <- get(draft.employeeId)
               _ <- {
                 if (orig.contains(draft)) log.debug(s"Nothing to update in ${draft.employeeId.asString}")
-                else underlying.update(draft) *> Sql.update.run(draft).transact(tr).unit
+                else underlying.update(draft) <&> Sql.update.run(draft).transact(tr).unit
               }
             } yield ()
           }

@@ -80,6 +80,7 @@ chmod -R 755 $userPath $userPath""")
       workDir(userPath)
       entryPoint(
         entryPointSh,
+        s"-Dconfig.override_with_env_vars=true", // https://github.com/lightbend/config#optional-system-or-env-variable-overrides
         s"-Dconfig.file=$userPath/main.conf",
         s"-Dbarbarissa.backend.runtime-dir=$userPath"
       )

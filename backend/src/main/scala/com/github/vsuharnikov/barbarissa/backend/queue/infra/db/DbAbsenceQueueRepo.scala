@@ -42,7 +42,7 @@ retries INT NOT NULL
 
     def getUncompleted(num: Int) = sql"""SELECT
 absenceId, done, claimSent, appointmentCreated, retries
-FROM AbsenceQueue WHERE done = FALSE ORDER BY absenceId LIMIT $num
+FROM AbsenceQueue WHERE done = FALSE AND retries < 10 ORDER BY absenceId LIMIT $num
 """.query[AbsenceQueueItem].to[List]
 
     val add = Update[AbsenceQueueItem]("""INSERT IGNORE INTO

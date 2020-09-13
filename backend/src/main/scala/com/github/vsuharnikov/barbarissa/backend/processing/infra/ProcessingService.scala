@@ -152,15 +152,13 @@ object ProcessingService {
                       e => log.warn(s"Can't send a claim: ${e.getMessage}") *> ZIO.succeed(false),
                       _ => ZIO.succeed(true)
                     )
-                  _ <- ZIO.when(appointmentCreated || claimSent) {
-                    val draft = x.copy(
+                  _ <- absenceQueue.update(
+                    x.copy(
                       done = appointmentCreated && claimSent,
                       appointmentCreated = appointmentCreated,
                       claimSent = claimSent,
                       retries = x.retries + 1
-                    )
-                    absenceQueue.update(draft)
-                  }
+                    ))
                 } yield ()
 
                 process.tapError { e =>

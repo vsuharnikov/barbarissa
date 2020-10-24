@@ -60,6 +60,7 @@ inTask(docker)(
       val entryPointSh = s"$appPath/bin/$fullName"
 
       from("openjdk:11.0.8-jre-slim-buster")
+      env("CONFIG_PATH", s"$userPath/main.conf")
 
       List(
         (Universal / stage).value -> s"$appPath/"
@@ -78,11 +79,9 @@ chmod -R 755 $userPath $userPath""")
 
       runShell("chmod", "+x", s"$appPath/bin/$fullName")
       workDir(userPath)
-      entryPoint(
-        entryPointSh,
-        s"-Dconfig.override_with_env_vars=true", // https://github.com/lightbend/config#optional-system-or-env-variable-overrides
-        s"-Dconfig.file=$userPath/main.conf",
-        s"-Dbarbarissa.backend.runtime-dir=$userPath"
+      entryPointRaw(
+        // https://github.com/lightbend/config#optional-system-or-env-variable-overrides
+        s"""$entryPointSh -Dconfig.override_with_env_vars=true -Dconfig.file=$${CONFIG_PATH} -Dbarbarissa.backend.runtime-dir=$userPath"""
       )
       volume(userPath)
       expose(10203)
